@@ -3,6 +3,7 @@ package generator
 import (
 	"bytes"
 	"io"
+	"io/fs"
 	"os"
 	"testing"
 
@@ -24,6 +25,34 @@ func TestNewGenerator(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := NewGenerator()
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.NotNil(t, got)
+			assert.NotNil(t, got.engine)
+		})
+	}
+}
+
+func TestNewGeneratorWithFS(t *testing.T) {
+	tests := []struct {
+		name    string
+		fsys    fs.FS
+		wantErr bool
+	}{
+		{
+			name:    "creates generator with embedded FS successfully",
+			fsys:    templatesFS,
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := NewGeneratorWithFS(tt.fsys)
 			if tt.wantErr {
 				require.Error(t, err)
 				return

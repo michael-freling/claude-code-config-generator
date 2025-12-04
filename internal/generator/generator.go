@@ -2,6 +2,7 @@ package generator
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 )
 
@@ -11,6 +12,17 @@ type Generator struct {
 
 func NewGenerator() (*Generator, error) {
 	engine, err := NewEngine()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create engine: %w", err)
+	}
+
+	return &Generator{
+		engine: engine,
+	}, nil
+}
+
+func NewGeneratorWithFS(fsys fs.FS) (*Generator, error) {
+	engine, err := NewEngineWithFS(fsys)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create engine: %w", err)
 	}
