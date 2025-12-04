@@ -1,6 +1,7 @@
 package generator
 
 import (
+	"io/fs"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -21,6 +22,42 @@ func TestNewEngine(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := NewEngine()
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.NotNil(t, got)
+			assert.NotNil(t, got.templates)
+			assert.NotNil(t, got.templateNames)
+
+			// Verify all item types have templates loaded
+			itemTypes := []ItemType{ItemTypeSkill, ItemTypeAgent, ItemTypeCommand}
+			for _, itemType := range itemTypes {
+				assert.Contains(t, got.templates, itemType)
+				assert.Contains(t, got.templateNames, itemType)
+			}
+		})
+	}
+}
+
+func TestNewEngineWithFS(t *testing.T) {
+	tests := []struct {
+		name    string
+		fsys    fs.FS
+		wantErr bool
+	}{
+		{
+			name:    "successfully loads embedded templates",
+			fsys:    templatesFS,
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := NewEngineWithFS(tt.fsys)
 			if tt.wantErr {
 				require.Error(t, err)
 				return

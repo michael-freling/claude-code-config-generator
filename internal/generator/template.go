@@ -1,12 +1,13 @@
 package generator
 
 import (
-	"embed"
 	"fmt"
 	"io/fs"
 	"path/filepath"
 	"strings"
 	"text/template"
+
+	"github.com/michael-freling/claude-code-config/templates"
 )
 
 // ItemType represents the type of item to generate
@@ -24,8 +25,7 @@ type TemplateData struct {
 	Type ItemType
 }
 
-//go:embed all:templates
-var templatesFS embed.FS
+var templatesFS = templates.FS
 
 // Engine holds parsed templates and provides generation capabilities
 type Engine struct {
@@ -33,8 +33,13 @@ type Engine struct {
 	templateNames map[ItemType][]string
 }
 
-// NewEngine creates a new template engine by loading and parsing all templates
+// NewEngine creates a new template engine by loading and parsing all templates from embedded FS
 func NewEngine() (*Engine, error) {
+	return NewEngineWithFS(templatesFS)
+}
+
+// NewEngineWithFS creates a new template engine by loading and parsing all templates from the provided FS
+func NewEngineWithFS(fsys fs.FS) (*Engine, error) {
 	engine := &Engine{
 		templates:     make(map[ItemType]*template.Template),
 		templateNames: make(map[ItemType][]string),
@@ -43,7 +48,7 @@ func NewEngine() (*Engine, error) {
 	itemTypes := []ItemType{ItemTypeSkill, ItemTypeAgent, ItemTypeCommand}
 
 	for _, itemType := range itemTypes {
-		tmpl, names, err := loadTemplatesForType(itemType)
+		tmpl, names, err := loadTemplatesForType(fsys, itemType)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load templates for %s: %w", itemType, err)
 		}
@@ -54,12 +59,12 @@ func NewEngine() (*Engine, error) {
 	return engine, nil
 }
 
-// loadTemplatesForType loads all templates for a specific item type
-func loadTemplatesForType(itemType ItemType) (*template.Template, []string, error) {
-	dir := fmt.Sprintf("templates/prompts/%ss", itemType)
+// loadTemplatesForType loads all templates for a specific item type from the provided FS
+func loadTemplatesForType(fsys fs.FS, itemType ItemType) (*template.Template, []string, error) {
+	dir := fmt.Sprintf("prompts/%ss", itemType)
 
 	// Check if directory exists
-	entries, err := fs.ReadDir(templatesFS, dir)
+	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
 		// Directory doesn't exist, return empty template set
 		return template.New(string(itemType)), []string{}, nil
@@ -69,7 +74,7 @@ func loadTemplatesForType(itemType ItemType) (*template.Template, []string, erro
 
 	// First pass: parse type-specific _partials.tmpl from the type's directory
 	typePartialsPath := filepath.Join(dir, "_partials.tmpl")
-	partialsContent, err := fs.ReadFile(templatesFS, typePartialsPath)
+	partialsContent, err := fs.ReadFile(fsys, typePartialsPath)
 	if err == nil {
 		tmpl = template.New(string(itemType))
 		tmpl, err = tmpl.Parse(string(partialsContent))
@@ -95,7 +100,7 @@ func loadTemplatesForType(itemType ItemType) (*template.Template, []string, erro
 		}
 
 		filePath := filepath.Join(dir, entry.Name())
-		content, err := fs.ReadFile(templatesFS, filePath)
+		content, err := fs.ReadFile(fsys, filePath)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to read template file %s: %w", filePath, err)
 		}
