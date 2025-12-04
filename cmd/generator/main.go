@@ -37,6 +37,19 @@ func createGenerator() (*generator.Generator, error) {
 		return generator.NewGenerator()
 	}
 
+	// Validate that the directory exists and is readable
+	info, err := os.Stat(templateDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("template directory does not exist: %s", templateDir)
+		}
+		return nil, fmt.Errorf("failed to access template directory %s: %w", templateDir, err)
+	}
+
+	if !info.IsDir() {
+		return nil, fmt.Errorf("template path is not a directory: %s", templateDir)
+	}
+
 	fsys := os.DirFS(templateDir)
 	return generator.NewGeneratorWithFS(fsys)
 }
