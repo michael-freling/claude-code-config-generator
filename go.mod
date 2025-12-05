@@ -1,6 +1,6 @@
 module github.com/michael-freling/claude-code-config
 
-go 1.24.0
+go 1.25
 
 require (
 	github.com/gofrs/flock v0.13.0
