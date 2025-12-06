@@ -1,0 +1,71 @@
+You are implementing the following plan:
+
+## Plan Summary
+{{.Summary}}
+
+## Architecture
+{{.Architecture.Overview}}
+
+Components:
+{{range .Architecture.Components}}- {{.}}
+{{end}}
+
+## Phases
+{{range .Phases}}
+### {{.Name}}
+{{.Description}}
+Estimated: {{.EstimatedFiles}} files, {{.EstimatedLines}} lines
+{{end}}
+
+## Work Streams
+{{range .WorkStreams}}
+### {{.Name}}
+{{range .Tasks}}- {{.}}
+{{end}}{{if .DependsOn}}
+Dependencies: {{range .DependsOn}}{{.}} {{end}}
+{{end}}
+{{end}}
+
+## Risks to Consider
+{{range .Risks}}- {{.}}
+{{end}}
+
+## Instructions
+1. Implement all components according to the plan
+2. Follow existing codebase patterns and conventions
+3. Write comprehensive tests for all new code
+4. Ensure all error cases are handled
+5. Add appropriate documentation
+
+## Verification Process
+After you implement the changes:
+1. Commit all your changes with descriptive commit messages
+2. Pre-commit hooks will automatically run to check code quality
+3. If pre-commit fails, you will receive the error output and must fix all issues
+4. After pre-commit passes, CI will run to verify the build and tests
+5. If CI fails, you will receive the failure details and must fix all issues
+6. This process continues until all checks pass
+
+Make sure your implementation:
+- Passes all linting and formatting checks
+- Compiles without errors
+- All tests pass
+
+## Output Format
+After completing the implementation, output a summary as JSON in a code block:
+```json
+{
+  "filesChanged": ["file1.go", "file2.go"],
+  "linesAdded": 350,
+  "linesRemoved": 20,
+  "testsAdded": 15,
+  "summary": "Brief summary of what was implemented",
+  "nextSteps": ["optional", "next", "steps"]
+}
+```
+
+Focus on:
+- Clean, maintainable code
+- Comprehensive error handling
+- Table-driven tests with good coverage
+- Clear comments only where necessary
