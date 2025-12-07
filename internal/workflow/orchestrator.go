@@ -255,14 +255,14 @@ func (o *Orchestrator) executePlanning(ctx context.Context, state *WorkflowState
 		return o.failWorkflow(state, fmt.Errorf("failed to generate planning prompt: %w", err))
 	}
 
-	spinner := NewSpinner("Invoking Claude Code to analyze codebase...")
+	spinner := NewStreamingSpinner("Analyzing codebase...")
 	spinner.Start()
 
-	result, err := o.executor.Execute(ctx, ExecuteConfig{
+	result, err := o.executor.ExecuteStreaming(ctx, ExecuteConfig{
 		Prompt:     prompt,
 		Timeout:    o.config.Timeouts.Planning,
 		JSONSchema: PlanSchema,
-	})
+	}, spinner.OnProgress)
 
 	if err != nil {
 		spinner.Fail("Planning failed")
@@ -272,12 +272,24 @@ func (o *Orchestrator) executePlanning(ctx context.Context, state *WorkflowState
 	jsonStr, err := o.parser.ExtractJSON(result.Output)
 	if err != nil {
 		spinner.Fail("Failed to parse planning output")
+		// Save raw output for debugging
+		if saveErr := o.stateManager.SaveRawOutput(state.Name, PhasePlanning, result.Output); saveErr != nil {
+			fmt.Printf("%s Failed to save raw output: %v\n", Yellow("⚠"), saveErr)
+		} else {
+			fmt.Printf("%s Raw output saved to: %s/phases/planning_raw.txt\n", Yellow("Debug:"), o.stateManager.WorkflowDir(state.Name))
+		}
 		return o.failWorkflow(state, fmt.Errorf("failed to extract JSON from planning output: %w", err))
 	}
 
 	plan, err := o.parser.ParsePlan(jsonStr)
 	if err != nil {
 		spinner.Fail("Failed to parse plan")
+		// Save raw output for debugging
+		if saveErr := o.stateManager.SaveRawOutput(state.Name, PhasePlanning, result.Output); saveErr != nil {
+			fmt.Printf("%s Failed to save raw output: %v\n", Yellow("⚠"), saveErr)
+		} else {
+			fmt.Printf("%s Raw output saved to: %s/phases/planning_raw.txt\n", Yellow("Debug:"), o.stateManager.WorkflowDir(state.Name))
+		}
 		return o.failWorkflow(state, fmt.Errorf("failed to parse plan: %w", err))
 	}
 
@@ -366,14 +378,14 @@ func (o *Orchestrator) executeImplementation(ctx context.Context, state *Workflo
 			fmt.Printf("\n%s Attempt %d/%d to fix pre-commit errors\n", Yellow("⚠"), attempt, o.config.MaxFixAttempts)
 		}
 
-		spinner := NewSpinner("Implementing changes...")
+		spinner := NewStreamingSpinner("Implementing changes...")
 		spinner.Start()
 
-		result, err := o.executor.Execute(ctx, ExecuteConfig{
+		result, err := o.executor.ExecuteStreaming(ctx, ExecuteConfig{
 			Prompt:     prompt,
 			Timeout:    o.config.Timeouts.Implementation,
 			JSONSchema: ImplementationSummarySchema,
-		})
+		}, spinner.OnProgress)
 
 		if err != nil {
 			spinner.Fail("Implementation failed")
@@ -383,12 +395,24 @@ func (o *Orchestrator) executeImplementation(ctx context.Context, state *Workflo
 		jsonStr, err := o.parser.ExtractJSON(result.Output)
 		if err != nil {
 			spinner.Fail("Failed to parse implementation output")
+			// Save raw output for debugging
+			if saveErr := o.stateManager.SaveRawOutput(state.Name, PhaseImplementation, result.Output); saveErr != nil {
+				fmt.Printf("%s Failed to save raw output: %v\n", Yellow("⚠"), saveErr)
+			} else {
+				fmt.Printf("%s Raw output saved to: %s/phases/implementation_raw.txt\n", Yellow("Debug:"), o.stateManager.WorkflowDir(state.Name))
+			}
 			return o.failWorkflow(state, fmt.Errorf("failed to extract JSON from implementation output: %w", err))
 		}
 
 		summary, err := o.parser.ParseImplementationSummary(jsonStr)
 		if err != nil {
 			spinner.Fail("Failed to parse implementation summary")
+			// Save raw output for debugging
+			if saveErr := o.stateManager.SaveRawOutput(state.Name, PhaseImplementation, result.Output); saveErr != nil {
+				fmt.Printf("%s Failed to save raw output: %v\n", Yellow("⚠"), saveErr)
+			} else {
+				fmt.Printf("%s Raw output saved to: %s/phases/implementation_raw.txt\n", Yellow("Debug:"), o.stateManager.WorkflowDir(state.Name))
+			}
 			return o.failWorkflow(state, fmt.Errorf("failed to parse implementation summary: %w", err))
 		}
 
@@ -495,14 +519,14 @@ func (o *Orchestrator) executeRefactoring(ctx context.Context, state *WorkflowSt
 			fmt.Printf("\n%s Attempt %d/%d to fix pre-commit errors\n", Yellow("⚠"), attempt, o.config.MaxFixAttempts)
 		}
 
-		spinner := NewSpinner("Refactoring code...")
+		spinner := NewStreamingSpinner("Refactoring code...")
 		spinner.Start()
 
-		result, err := o.executor.Execute(ctx, ExecuteConfig{
+		result, err := o.executor.ExecuteStreaming(ctx, ExecuteConfig{
 			Prompt:     prompt,
 			Timeout:    o.config.Timeouts.Refactoring,
 			JSONSchema: RefactoringSummarySchema,
-		})
+		}, spinner.OnProgress)
 
 		if err != nil {
 			spinner.Fail("Refactoring failed")
@@ -512,12 +536,24 @@ func (o *Orchestrator) executeRefactoring(ctx context.Context, state *WorkflowSt
 		jsonStr, err := o.parser.ExtractJSON(result.Output)
 		if err != nil {
 			spinner.Fail("Failed to parse refactoring output")
+			// Save raw output for debugging
+			if saveErr := o.stateManager.SaveRawOutput(state.Name, PhaseRefactoring, result.Output); saveErr != nil {
+				fmt.Printf("%s Failed to save raw output: %v\n", Yellow("⚠"), saveErr)
+			} else {
+				fmt.Printf("%s Raw output saved to: %s/phases/refactoring_raw.txt\n", Yellow("Debug:"), o.stateManager.WorkflowDir(state.Name))
+			}
 			return o.failWorkflow(state, fmt.Errorf("failed to extract JSON from refactoring output: %w", err))
 		}
 
 		summary, err := o.parser.ParseRefactoringSummary(jsonStr)
 		if err != nil {
 			spinner.Fail("Failed to parse refactoring summary")
+			// Save raw output for debugging
+			if saveErr := o.stateManager.SaveRawOutput(state.Name, PhaseRefactoring, result.Output); saveErr != nil {
+				fmt.Printf("%s Failed to save raw output: %v\n", Yellow("⚠"), saveErr)
+			} else {
+				fmt.Printf("%s Raw output saved to: %s/phases/refactoring_raw.txt\n", Yellow("Debug:"), o.stateManager.WorkflowDir(state.Name))
+			}
 			return o.failWorkflow(state, fmt.Errorf("failed to parse refactoring summary: %w", err))
 		}
 
@@ -651,14 +687,14 @@ func (o *Orchestrator) executePRSplit(ctx context.Context, state *WorkflowState)
 			fmt.Printf("\n%s Attempt %d/%d to fix errors\n", Yellow("⚠"), attempt, o.config.MaxFixAttempts)
 		}
 
-		spinner := NewSpinner("Splitting PR into manageable pieces...")
+		spinner := NewStreamingSpinner("Splitting PR into manageable pieces...")
 		spinner.Start()
 
-		result, err := o.executor.Execute(ctx, ExecuteConfig{
+		result, err := o.executor.ExecuteStreaming(ctx, ExecuteConfig{
 			Prompt:     prompt,
 			Timeout:    o.config.Timeouts.PRSplit,
 			JSONSchema: PRSplitResultSchema,
-		})
+		}, spinner.OnProgress)
 
 		if err != nil {
 			spinner.Fail("PR split failed")
@@ -668,12 +704,24 @@ func (o *Orchestrator) executePRSplit(ctx context.Context, state *WorkflowState)
 		jsonStr, err := o.parser.ExtractJSON(result.Output)
 		if err != nil {
 			spinner.Fail("Failed to parse PR split output")
+			// Save raw output for debugging
+			if saveErr := o.stateManager.SaveRawOutput(state.Name, PhasePRSplit, result.Output); saveErr != nil {
+				fmt.Printf("%s Failed to save raw output: %v\n", Yellow("⚠"), saveErr)
+			} else {
+				fmt.Printf("%s Raw output saved to: %s/phases/pr_split_raw.txt\n", Yellow("Debug:"), o.stateManager.WorkflowDir(state.Name))
+			}
 			return o.failWorkflow(state, fmt.Errorf("failed to extract JSON from PR split output: %w", err))
 		}
 
 		prResult, err = o.parser.ParsePRSplitResult(jsonStr)
 		if err != nil {
 			spinner.Fail("Failed to parse PR split result")
+			// Save raw output for debugging
+			if saveErr := o.stateManager.SaveRawOutput(state.Name, PhasePRSplit, result.Output); saveErr != nil {
+				fmt.Printf("%s Failed to save raw output: %v\n", Yellow("⚠"), saveErr)
+			} else {
+				fmt.Printf("%s Raw output saved to: %s/phases/pr_split_raw.txt\n", Yellow("Debug:"), o.stateManager.WorkflowDir(state.Name))
+			}
 			return o.failWorkflow(state, fmt.Errorf("failed to parse PR split result: %w", err))
 		}
 
@@ -873,6 +921,10 @@ func isRecoverableError(err error) bool {
 	case strings.Contains(err.Error(), "claude execution failed"):
 		return true
 	case strings.Contains(err.Error(), "failed to parse"):
+		// Parse errors are recoverable since Claude's response can vary on retry
+		return true
+	case strings.Contains(err.Error(), "invalid workflow name"):
+		// Invalid input errors are not recoverable
 		return false
 	case strings.Contains(err.Error(), "invalid"):
 		return false

@@ -25,6 +25,14 @@ func (m *MockClaudeExecutor) Execute(ctx context.Context, config ExecuteConfig) 
 	return args.Get(0).(*ExecuteResult), args.Error(1)
 }
 
+func (m *MockClaudeExecutor) ExecuteStreaming(ctx context.Context, config ExecuteConfig, onProgress func(ProgressEvent)) (*ExecuteResult, error) {
+	args := m.Called(ctx, config, onProgress)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*ExecuteResult), args.Error(1)
+}
+
 // MockStateManager is a mock implementation of StateManager
 type MockStateManager struct {
 	mock.Mock
@@ -104,6 +112,11 @@ func (m *MockStateManager) ListWorkflows() ([]WorkflowInfo, error) {
 
 func (m *MockStateManager) DeleteWorkflow(name string) error {
 	args := m.Called(name)
+	return args.Error(0)
+}
+
+func (m *MockStateManager) SaveRawOutput(name string, phase Phase, output string) error {
+	args := m.Called(name, phase, output)
 	return args.Error(0)
 }
 
@@ -316,7 +329,7 @@ func TestOrchestrator_executePlanning(t *testing.T) {
 			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser) {
 				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
 				pg.On("GeneratePlanningPrompt", WorkflowTypeFeature, "test description", []string(nil)).Return("planning prompt", nil)
-				exec.On("Execute", mock.Anything, mock.Anything).Return(&ExecuteResult{
+				exec.On("ExecuteStreaming", mock.Anything, mock.Anything, mock.Anything).Return(&ExecuteResult{
 					Output:   "```json\n{\"summary\": \"test plan\"}\n```",
 					ExitCode: 0,
 				}, nil)
@@ -333,7 +346,7 @@ func TestOrchestrator_executePlanning(t *testing.T) {
 			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser) {
 				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
 				pg.On("GeneratePlanningPrompt", WorkflowTypeFeature, "test description", []string(nil)).Return("planning prompt", nil)
-				exec.On("Execute", mock.Anything, mock.Anything).Return((*ExecuteResult)(nil), errors.New("execution failed"))
+				exec.On("ExecuteStreaming", mock.Anything, mock.Anything, mock.Anything).Return((*ExecuteResult)(nil), errors.New("execution failed"))
 			},
 			wantErr:       true,
 			wantNextPhase: PhaseFailed,
@@ -484,7 +497,7 @@ func TestOrchestrator_executeImplementation(t *testing.T) {
 				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
 				sm.On("LoadPlan", "test-workflow").Return(&Plan{Summary: "test plan"}, nil)
 				pg.On("GenerateImplementationPrompt", mock.Anything).Return("implementation prompt", nil)
-				exec.On("Execute", mock.Anything, mock.Anything).Return(&ExecuteResult{
+				exec.On("ExecuteStreaming", mock.Anything, mock.Anything, mock.Anything).Return(&ExecuteResult{
 					Output:   "```json\n{\"summary\": \"implemented\"}\n```",
 					ExitCode: 0,
 				}, nil)
@@ -504,7 +517,7 @@ func TestOrchestrator_executeImplementation(t *testing.T) {
 				sm.On("LoadPlan", "test-workflow").Return(&Plan{Summary: "test plan"}, nil)
 
 				pg.On("GenerateImplementationPrompt", mock.Anything).Return("implementation prompt", nil).Once()
-				exec.On("Execute", mock.Anything, mock.Anything).Return(&ExecuteResult{
+				exec.On("ExecuteStreaming", mock.Anything, mock.Anything, mock.Anything).Return(&ExecuteResult{
 					Output:   "```json\n{\"summary\": \"implemented\"}\n```",
 					ExitCode: 0,
 				}, nil).Times(2)
@@ -927,9 +940,9 @@ func TestIsRecoverableError(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "parse error is not recoverable",
+			name: "parse error is recoverable",
 			err:  errors.New("failed to parse JSON"),
-			want: false,
+			want: true,
 		},
 		{
 			name: "invalid input is not recoverable",
@@ -1048,7 +1061,7 @@ func TestOrchestrator_executePRSplit(t *testing.T) {
 			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser) {
 				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
 				pg.On("GeneratePRSplitPrompt", mock.Anything).Return("pr-split prompt", nil)
-				exec.On("Execute", mock.Anything, mock.Anything).Return(&ExecuteResult{
+				exec.On("ExecuteStreaming", mock.Anything, mock.Anything, mock.Anything).Return(&ExecuteResult{
 					Output:   "```json\n{\"summary\": \"split complete\"}\n```",
 					ExitCode: 0,
 				}, nil)
