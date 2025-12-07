@@ -118,6 +118,31 @@ func TestCIChecker_CheckCI_NotInstalled(t *testing.T) {
 	assert.False(t, result.Passed)
 }
 
+func TestCIChecker_CheckCI_NoPR(t *testing.T) {
+	// This test verifies the error handling when gh pr checks fails
+	// Running in /tmp (non-git directory) will cause an error
+	checker := NewCIChecker("/tmp", 1*time.Second)
+	ctx := context.Background()
+
+	result, err := checker.CheckCI(ctx, 0)
+	require.Error(t, err)
+	require.NotNil(t, result)
+	assert.False(t, result.Passed)
+}
+
+func TestParseCIOutput_PendingStatus(t *testing.T) {
+	// Test that pending status from gh pr checks (exit code 8) is handled correctly
+	// Exit code 8 means "checks pending" - when there's output, parse it
+	output := `Vercel Preview Comments	pass	0	https://vercel.com/github
+Test go/aninexus-gateway / Lint go/aninexus-gateway	pending	0	https://github.com/example/actions/runs/123
+Test go/aninexus-gateway / Test go/aninexus-gateway	pending	0	https://github.com/example/actions/runs/123
+Vercel – nooxac-gateway	pass	0	https://vercel.com/example	Deployment has completed`
+
+	status, failedJobs := parseCIOutput(output)
+	assert.Equal(t, "pending", status)
+	assert.Empty(t, failedJobs)
+}
+
 func TestCIChecker_WaitForCI_Timeout(t *testing.T) {
 	checker := NewCIChecker("/nonexistent/path/that/should/not/exist", 100*time.Millisecond)
 	ctx := context.Background()

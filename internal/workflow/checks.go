@@ -72,8 +72,28 @@ func (c *ciChecker) CheckCI(ctx context.Context, prNumber int) (*CIResult, error
 
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			if exitErr.ExitCode() == 127 {
+			switch exitErr.ExitCode() {
+			case 127:
 				return result, fmt.Errorf("gh CLI not found: is it installed?")
+			case 8:
+				// Exit code 8 means "checks pending" according to gh pr checks --help
+				// Parse the output to get the current status
+				if output != "" {
+					result.Status, result.FailedJobs = parseCIOutput(output)
+					result.Passed = result.Status == "success"
+					return result, nil
+				}
+				// No output with exit code 8 likely means no PR found
+				return result, fmt.Errorf("no PR found for the current branch: ensure a PR exists before checking CI status")
+			case 1:
+				// Exit code 1 can mean checks failed or other errors
+				// If we got output, parse it as normal (this indicates failed checks)
+				if output != "" {
+					result.Status, result.FailedJobs = parseCIOutput(output)
+					result.Passed = result.Status == "success"
+					return result, nil
+				}
+				return result, fmt.Errorf("failed to check CI status: %w (stderr: %s)", err, stderr.String())
 			}
 		}
 		return result, fmt.Errorf("failed to check CI status: %w (stderr: %s)", err, stderr.String())
