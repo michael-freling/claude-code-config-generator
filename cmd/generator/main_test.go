@@ -417,18 +417,33 @@ func TestSkillsCmd_Execute(t *testing.T) {
 func TestCreateGenerator_InvalidTemplateDir(t *testing.T) {
 	tests := []struct {
 		name        string
-		templateDir string
+		setupFunc   func(t *testing.T) string
+		cleanupFunc func(t *testing.T, saved string)
 		wantErr     bool
 		errContains string
 	}{
 		{
-			name:        "empty string uses embedded templates",
-			templateDir: "",
-			wantErr:     false,
+			name: "empty string uses embedded templates",
+			setupFunc: func(t *testing.T) string {
+				saved := saveTemplateDir()
+				templateDir = ""
+				return saved
+			},
+			cleanupFunc: func(t *testing.T, saved string) {
+				restoreTemplateDir(saved)
+			},
+			wantErr: false,
 		},
 		{
-			name:        "non-existent path returns error",
-			templateDir: "/absolutely/non/existent/path/12345",
+			name: "non-existent path returns error",
+			setupFunc: func(t *testing.T) string {
+				saved := saveTemplateDir()
+				templateDir = "/absolutely/non/existent/path/12345"
+				return saved
+			},
+			cleanupFunc: func(t *testing.T, saved string) {
+				restoreTemplateDir(saved)
+			},
 			wantErr:     true,
 			errContains: "template directory does not exist",
 		},
@@ -436,10 +451,8 @@ func TestCreateGenerator_InvalidTemplateDir(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			saved := saveTemplateDir()
-			defer restoreTemplateDir(saved)
-
-			templateDir = tt.templateDir
+			saved := tt.setupFunc(t)
+			defer tt.cleanupFunc(t, saved)
 
 			gen, err := createGenerator()
 
@@ -628,4 +641,55 @@ func TestSkillsCmd_List(t *testing.T) {
 
 	skills := gen.List(generator.ItemTypeSkill)
 	assert.NotEmpty(t, skills)
+}
+
+func TestAgentsCmd_CreateGeneratorError(t *testing.T) {
+	saved := saveTemplateDir()
+	defer restoreTemplateDir(saved)
+
+	templateDir = "/non/existent/path"
+
+	cmd := newAgentsCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"list"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to create generator")
+}
+
+func TestCommandsCmd_CreateGeneratorError(t *testing.T) {
+	saved := saveTemplateDir()
+	defer restoreTemplateDir(saved)
+
+	templateDir = "/non/existent/path"
+
+	cmd := newCommandsCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"list"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to create generator")
+}
+
+func TestSkillsCmd_CreateGeneratorError(t *testing.T) {
+	saved := saveTemplateDir()
+	defer restoreTemplateDir(saved)
+
+	templateDir = "/non/existent/path"
+
+	cmd := newSkillsCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"list"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to create generator")
 }

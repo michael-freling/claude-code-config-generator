@@ -7,6 +7,34 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Integration Test Documentation:
+//
+// The following methods in PRManager require git/gh CLI tools and are not unit testable:
+//
+// 1. CreatePR(ctx, title, body) - Requires:
+//    - gh CLI tool installed
+//    - Valid git repository with remote
+//    - GitHub authentication configured
+//    - Tests would create actual PRs on GitHub
+//
+// 2. GetCurrentBranchPR(ctx) - Requires:
+//    - gh CLI tool installed
+//    - Valid git repository with remote
+//    - GitHub authentication configured
+//    - Tests would query actual PRs from GitHub
+//
+// 3. EnsurePR(ctx, title, body) - Requires:
+//    - Same as CreatePR and GetCurrentBranchPR combined
+//
+// 4. PushBranch(ctx) - Requires:
+//    - git CLI tool installed
+//    - Valid git repository with remote
+//    - Write permissions to remote repository
+//    - Tests would push to actual remote repository
+//
+// These methods should be tested with integration tests in a separate test suite
+// that runs against a test repository with proper git/gh setup.
+
 func TestNewPRManager(t *testing.T) {
 	tests := []struct {
 		name       string

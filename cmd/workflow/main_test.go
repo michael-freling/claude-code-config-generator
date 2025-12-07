@@ -382,3 +382,148 @@ func TestCommandFlags(t *testing.T) {
 		})
 	}
 }
+
+func TestStartCmd_TypeFlagRequired(t *testing.T) {
+	cmd := newStartCmd()
+	flag := cmd.Flags().Lookup("type")
+	require.NotNil(t, flag)
+
+	annotations := flag.Annotations
+	_, required := annotations[cobra.BashCompOneRequiredFlag]
+	assert.True(t, required, "type flag should be marked as required")
+}
+
+func TestNewStartCmd_Structure(t *testing.T) {
+	cmd := newStartCmd()
+
+	assert.Equal(t, "start <name> <description>", cmd.Use)
+	assert.NotEmpty(t, cmd.Short)
+	assert.NotEmpty(t, cmd.Long)
+	assert.NotNil(t, cmd.RunE)
+
+	flag := cmd.Flags().Lookup("type")
+	require.NotNil(t, flag)
+	assert.Equal(t, "string", flag.Value.Type())
+}
+
+func TestNewListCmd_Structure(t *testing.T) {
+	cmd := newListCmd()
+
+	assert.Equal(t, "list", cmd.Use)
+	assert.NotEmpty(t, cmd.Short)
+	assert.NotEmpty(t, cmd.Long)
+	assert.NotNil(t, cmd.RunE)
+	assert.NotNil(t, cmd.Args)
+}
+
+func TestNewStatusCmd_Structure(t *testing.T) {
+	cmd := newStatusCmd()
+
+	assert.Equal(t, "status <name>", cmd.Use)
+	assert.NotEmpty(t, cmd.Short)
+	assert.NotEmpty(t, cmd.Long)
+	assert.NotNil(t, cmd.RunE)
+	assert.NotNil(t, cmd.Args)
+}
+
+func TestNewResumeCmd_Structure(t *testing.T) {
+	cmd := newResumeCmd()
+
+	assert.Equal(t, "resume <name>", cmd.Use)
+	assert.NotEmpty(t, cmd.Short)
+	assert.NotEmpty(t, cmd.Long)
+	assert.NotNil(t, cmd.RunE)
+	assert.NotNil(t, cmd.Args)
+}
+
+func TestNewDeleteCmd_Structure(t *testing.T) {
+	cmd := newDeleteCmd()
+
+	assert.Equal(t, "delete <name>", cmd.Use)
+	assert.NotEmpty(t, cmd.Short)
+	assert.NotEmpty(t, cmd.Long)
+	assert.NotNil(t, cmd.RunE)
+	assert.NotNil(t, cmd.Args)
+
+	flag := cmd.Flags().Lookup("force")
+	require.NotNil(t, flag)
+	assert.Equal(t, "bool", flag.Value.Type())
+	assert.Equal(t, "false", flag.DefValue)
+}
+
+func TestNewCleanCmd_Structure(t *testing.T) {
+	cmd := newCleanCmd()
+
+	assert.Equal(t, "clean", cmd.Use)
+	assert.NotEmpty(t, cmd.Short)
+	assert.NotEmpty(t, cmd.Long)
+	assert.NotNil(t, cmd.RunE)
+	assert.NotNil(t, cmd.Args)
+
+	flag := cmd.Flags().Lookup("force")
+	require.NotNil(t, flag)
+	assert.Equal(t, "bool", flag.Value.Type())
+	assert.Equal(t, "false", flag.DefValue)
+}
+
+func TestRootCmd_HasAllSubcommands(t *testing.T) {
+	cmd := newRootCmd()
+
+	subcommands := []string{"start", "list", "status", "resume", "delete", "clean"}
+	for _, name := range subcommands {
+		found := false
+		for _, c := range cmd.Commands() {
+			if c.Name() == name {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "root command should have %s subcommand", name)
+	}
+}
+
+func TestCommandValidation(t *testing.T) {
+	tests := []struct {
+		name        string
+		cmdFunc     func() *cobra.Command
+		validArgs   []string
+		invalidArgs []string
+	}{
+		{
+			name:        "start command validation",
+			cmdFunc:     newStartCmd,
+			validArgs:   []string{"name", "description"},
+			invalidArgs: []string{"only-one"},
+		},
+		{
+			name:        "status command validation",
+			cmdFunc:     newStatusCmd,
+			validArgs:   []string{"name"},
+			invalidArgs: []string{},
+		},
+		{
+			name:        "resume command validation",
+			cmdFunc:     newResumeCmd,
+			validArgs:   []string{"name"},
+			invalidArgs: []string{},
+		},
+		{
+			name:        "delete command validation",
+			cmdFunc:     newDeleteCmd,
+			validArgs:   []string{"name"},
+			invalidArgs: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := tt.cmdFunc()
+
+			err := cmd.Args(cmd, tt.validArgs)
+			assert.NoError(t, err, "valid args should not produce error")
+
+			err = cmd.Args(cmd, tt.invalidArgs)
+			assert.Error(t, err, "invalid args should produce error")
+		})
+	}
+}

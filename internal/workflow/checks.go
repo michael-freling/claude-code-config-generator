@@ -3,6 +3,7 @@ package workflow
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -30,18 +31,23 @@ type CIResult struct {
 
 // ciChecker implements CIChecker interface
 type ciChecker struct {
-	workingDir    string
-	checkInterval time.Duration
+	workingDir     string
+	checkInterval  time.Duration
+	commandTimeout time.Duration
 }
 
 // NewCIChecker creates a new CI checker
-func NewCIChecker(workingDir string, checkInterval time.Duration) CIChecker {
+func NewCIChecker(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker {
 	if checkInterval == 0 {
 		checkInterval = 30 * time.Second
 	}
+	if commandTimeout == 0 {
+		commandTimeout = 2 * time.Minute
+	}
 	return &ciChecker{
-		workingDir:    workingDir,
-		checkInterval: checkInterval,
+		workingDir:     workingDir,
+		checkInterval:  checkInterval,
+		commandTimeout: commandTimeout,
 	}
 }
 
@@ -52,57 +58,94 @@ func (c *ciChecker) CheckCI(ctx context.Context, prNumber int) (*CIResult, error
 		FailedJobs: []string{},
 	}
 
-	var cmd *exec.Cmd
-	if prNumber > 0 {
-		cmd = exec.CommandContext(ctx, "gh", "pr", "checks", fmt.Sprintf("%d", prNumber))
-	} else {
-		cmd = exec.CommandContext(ctx, "gh", "pr", "checks")
-	}
-	if c.workingDir != "" {
-		cmd.Dir = c.workingDir
-	}
+	const maxRetries = 3
+	var lastErr error
 
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	output := stdout.String()
-	result.Output = output
-
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			switch exitErr.ExitCode() {
-			case 127:
-				return result, fmt.Errorf("gh CLI not found: is it installed?")
-			case 8:
-				// Exit code 8 means "checks pending" according to gh pr checks --help
-				// Parse the output to get the current status
-				if output != "" {
-					result.Status, result.FailedJobs = parseCIOutput(output)
-					result.Passed = result.Status == "success"
-					return result, nil
-				}
-				// No output with exit code 8 likely means no PR found
-				return result, fmt.Errorf("no PR found for the current branch: ensure a PR exists before checking CI status")
-			case 1:
-				// Exit code 1 can mean checks failed or other errors
-				// If we got output, parse it as normal (this indicates failed checks)
-				if output != "" {
-					result.Status, result.FailedJobs = parseCIOutput(output)
-					result.Passed = result.Status == "success"
-					return result, nil
-				}
-				return result, fmt.Errorf("failed to check CI status: %w (stderr: %s)", err, stderr.String())
-			}
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		select {
+		case <-ctx.Done():
+			return result, ctx.Err()
+		default:
 		}
-		return result, fmt.Errorf("failed to check CI status: %w (stderr: %s)", err, stderr.String())
+
+		cmdCtx, cancel := context.WithTimeout(context.Background(), c.commandTimeout)
+		defer cancel()
+
+		var cmd *exec.Cmd
+		if prNumber > 0 {
+			cmd = exec.CommandContext(cmdCtx, "gh", "pr", "checks", fmt.Sprintf("%d", prNumber))
+		} else {
+			cmd = exec.CommandContext(cmdCtx, "gh", "pr", "checks")
+		}
+		if c.workingDir != "" {
+			cmd.Dir = c.workingDir
+		}
+
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+
+		err := cmd.Run()
+		output := stdout.String()
+		result.Output = output
+
+		if err != nil {
+			if strings.Contains(err.Error(), "signal: killed") {
+				lastErr = fmt.Errorf("%w: gh command exceeded %s", ErrCICheckTimeout, c.commandTimeout)
+				if attempt < maxRetries {
+					backoff := time.Duration(attempt) * time.Second
+					time.Sleep(backoff)
+					continue
+				}
+				return result, lastErr
+			}
+
+			if cmdCtx.Err() == context.DeadlineExceeded {
+				lastErr = fmt.Errorf("%w: gh command exceeded %s", ErrCICheckTimeout, c.commandTimeout)
+				if attempt < maxRetries {
+					backoff := time.Duration(attempt) * time.Second
+					time.Sleep(backoff)
+					continue
+				}
+				return result, lastErr
+			}
+
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				switch exitErr.ExitCode() {
+				case 127:
+					return result, fmt.Errorf("gh CLI not found: is it installed?")
+				case 8:
+					if output != "" {
+						result.Status, result.FailedJobs = parseCIOutput(output)
+						result.Passed = result.Status == "success"
+						return result, nil
+					}
+					return result, fmt.Errorf("no PR found for the current branch: ensure a PR exists before checking CI status")
+				case 1:
+					if output != "" {
+						result.Status, result.FailedJobs = parseCIOutput(output)
+						result.Passed = result.Status == "success"
+						return result, nil
+					}
+					return result, fmt.Errorf("failed to check CI status: %w (stderr: %s)", err, stderr.String())
+				}
+			}
+
+			lastErr = err
+			if attempt < maxRetries {
+				backoff := time.Duration(attempt) * time.Second
+				time.Sleep(backoff)
+				continue
+			}
+			return result, fmt.Errorf("failed to check CI status: %w (stderr: %s)", err, stderr.String())
+		}
+
+		result.Status, result.FailedJobs = parseCIOutput(output)
+		result.Passed = result.Status == "success"
+		return result, nil
 	}
 
-	result.Status, result.FailedJobs = parseCIOutput(output)
-	result.Passed = result.Status == "success"
-
-	return result, nil
+	return result, fmt.Errorf("failed to check CI status after %d retries: %w", maxRetries, lastErr)
 }
 
 // WaitForCI waits for CI to complete with polling. If prNumber is 0, checks the current branch's PR.
@@ -120,8 +163,7 @@ func (c *ciChecker) WaitForCIWithOptions(ctx context.Context, prNumber int, time
 		opts.E2ETestPattern = "e2e|E2E|integration|Integration"
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+	deadline := time.Now().Add(timeout)
 
 	ticker := time.NewTicker(c.checkInterval)
 	defer ticker.Stop()
@@ -134,8 +176,15 @@ func (c *ciChecker) WaitForCIWithOptions(ctx context.Context, prNumber int, time
 		case <-ctx.Done():
 			return nil, fmt.Errorf("CI check timeout after %s", timeout)
 		case <-ticker.C:
-			result, err := c.CheckCI(ctx, prNumber)
+			if time.Now().After(deadline) {
+				return nil, fmt.Errorf("CI check timeout after %s", timeout)
+			}
+
+			result, err := c.CheckCI(context.Background(), prNumber)
 			if err != nil {
+				if errors.Is(err, ErrCICheckTimeout) {
+					continue
+				}
 				return nil, err
 			}
 

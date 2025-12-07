@@ -326,6 +326,85 @@ func TestStreamingSpinner_OnProgress(t *testing.T) {
 	}
 }
 
+func TestStreamingSpinner_Lifecycle(t *testing.T) {
+	tests := []struct {
+		name string
+	}{
+		{
+			name: "Start and Stop cycle works correctly",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spinner := NewStreamingSpinner("Testing")
+
+			spinner.Start()
+			time.Sleep(10 * time.Millisecond)
+			assert.True(t, spinner.running)
+
+			spinner.Stop()
+			time.Sleep(10 * time.Millisecond)
+			assert.False(t, spinner.running)
+		})
+	}
+}
+
+func TestStreamingSpinner_Success(t *testing.T) {
+	tests := []struct {
+		name    string
+		message string
+	}{
+		{
+			name:    "Success stops spinner and prints message with stats",
+			message: "Operation completed successfully",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spinner := NewStreamingSpinner("Testing")
+
+			spinner.Start()
+			time.Sleep(10 * time.Millisecond)
+
+			spinner.OnProgress(ProgressEvent{
+				Type:     "tool_use",
+				ToolName: "Read",
+			})
+
+			spinner.Success(tt.message)
+			time.Sleep(10 * time.Millisecond)
+			assert.False(t, spinner.running)
+		})
+	}
+}
+
+func TestStreamingSpinner_Fail(t *testing.T) {
+	tests := []struct {
+		name    string
+		message string
+	}{
+		{
+			name:    "Fail stops spinner and prints error message",
+			message: "Operation failed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spinner := NewStreamingSpinner("Testing")
+
+			spinner.Start()
+			time.Sleep(10 * time.Millisecond)
+
+			spinner.Fail(tt.message)
+			time.Sleep(10 * time.Millisecond)
+			assert.False(t, spinner.running)
+		})
+	}
+}
+
 func TestFormatDuration(t *testing.T) {
 	tests := []struct {
 		name     string

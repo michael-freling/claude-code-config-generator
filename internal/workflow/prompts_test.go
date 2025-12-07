@@ -3,6 +3,7 @@ package workflow
 import (
 	"strings"
 	"testing"
+	"text/template"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -573,6 +574,64 @@ exit status 1`,
 			for _, want := range tt.wantContain {
 				assert.Contains(t, got, want)
 			}
+		})
+	}
+}
+
+func TestPromptGenerator_TemplateNotLoadedError(t *testing.T) {
+	tests := []struct {
+		name        string
+		genFunc     func(*promptGenerator) (string, error)
+		errContains string
+	}{
+		{
+			name: "fix-ci template not loaded returns error",
+			genFunc: func(pg *promptGenerator) (string, error) {
+				return pg.GenerateFixCIPrompt("test failure")
+			},
+			errContains: "fix-ci template not loaded",
+		},
+		{
+			name: "planning template not loaded returns error",
+			genFunc: func(pg *promptGenerator) (string, error) {
+				return pg.GeneratePlanningPrompt(WorkflowTypeFeature, "test", nil)
+			},
+			errContains: "planning template not loaded",
+		},
+		{
+			name: "implementation template not loaded returns error",
+			genFunc: func(pg *promptGenerator) (string, error) {
+				return pg.GenerateImplementationPrompt(&Plan{Summary: "test"})
+			},
+			errContains: "implementation template not loaded",
+		},
+		{
+			name: "refactoring template not loaded returns error",
+			genFunc: func(pg *promptGenerator) (string, error) {
+				return pg.GenerateRefactoringPrompt(&Plan{Summary: "test"})
+			},
+			errContains: "refactoring template not loaded",
+		},
+		{
+			name: "pr-split template not loaded returns error",
+			genFunc: func(pg *promptGenerator) (string, error) {
+				return pg.GeneratePRSplitPrompt(&PRMetrics{LinesChanged: 100, FilesChanged: 5})
+			},
+			errContains: "pr-split template not loaded",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pg := &promptGenerator{
+				templates: make(map[string]*template.Template),
+			}
+
+			got, err := tt.genFunc(pg)
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.errContains)
+			assert.Empty(t, got)
 		})
 	}
 }

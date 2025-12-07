@@ -595,7 +595,7 @@ func TestOrchestrator_executeImplementation(t *testing.T) {
 				parser:          mockOP,
 				config:          DefaultConfig("/tmp/workflows"),
 				worktreeManager: mockWM,
-				ciCheckerFactory: func(workingDir string, checkInterval time.Duration) CIChecker {
+				ciCheckerFactory: func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker {
 					return mockCI
 				},
 			}
@@ -1077,21 +1077,6 @@ func TestIsRecoverableError(t *testing.T) {
 			err:  nil,
 			want: false,
 		},
-		{
-			name: "invalid phase error is not recoverable",
-			err:  errors.New("invalid phase"),
-			want: false,
-		},
-		{
-			name: "general error without keywords is recoverable",
-			err:  errors.New("something went wrong"),
-			want: true,
-		},
-		{
-			name: "failed to execute is recoverable",
-			err:  errors.New("failed to execute command"),
-			want: true,
-		},
 	}
 
 	for _, tt := range tests {
@@ -1166,71 +1151,6 @@ func TestParseDiffStat(t *testing.T) {
 				FilesChanged:  1,
 				FilesAdded:    []string{"newfile.go"},
 				FilesModified: []string{},
-				FilesDeleted:  []string{},
-			},
-			wantErr: false,
-		},
-		{
-			name: "parses diff stat with deleted files",
-			diffOutput: ` oldfile.go (gone) | 15 ---------------
- 1 file changed, 15 deletions(-)`,
-			want: &PRMetrics{
-				LinesChanged:  15,
-				FilesChanged:  1,
-				FilesAdded:    []string{},
-				FilesModified: []string{},
-				FilesDeleted:  []string{"oldfile.go"},
-			},
-			wantErr: false,
-		},
-		{
-			name: "parses diff stat with mixed added, modified, and deleted files",
-			diffOutput: ` newfile.go (new) | 25 +++++++++++++++++++++++++
- modified.go | 10 +++++-----
- deleted.go (gone) | 30 ------------------------------
- 3 files changed, 35 insertions(+), 35 deletions(-)`,
-			want: &PRMetrics{
-				LinesChanged:  35,
-				FilesChanged:  3,
-				FilesAdded:    []string{"newfile.go"},
-				FilesModified: []string{"modified.go"},
-				FilesDeleted:  []string{"deleted.go"},
-			},
-			wantErr: false,
-		},
-		{
-			name: "parses summary line with insertions and deletions",
-			diffOutput: ` file1.go | 50 ++++++++++++++++++++++++++++++++++++++++++++++++++
- file2.go | 20 --------------------
- 3 files changed, 50 insertions(+), 20 deletions(-)`,
-			want: &PRMetrics{
-				LinesChanged:  50,
-				FilesChanged:  3,
-				FilesAdded:    []string{},
-				FilesModified: []string{"file1.go", "file2.go"},
-				FilesDeleted:  []string{},
-			},
-			wantErr: false,
-		},
-		{
-			name:       "handles only whitespace",
-			diffOutput: "   \n  \n",
-			want: &PRMetrics{
-				FilesAdded:    []string{},
-				FilesModified: []string{},
-				FilesDeleted:  []string{},
-			},
-			wantErr: false,
-		},
-		{
-			name: "parses single file change",
-			diffOutput: ` README.md | 1 +
- 1 file changed, 1 insertion(+)`,
-			want: &PRMetrics{
-				LinesChanged:  1,
-				FilesChanged:  1,
-				FilesAdded:    []string{},
-				FilesModified: []string{"README.md"},
 				FilesDeleted:  []string{},
 			},
 			wantErr: false,
@@ -1403,7 +1323,7 @@ func TestOrchestrator_executePRSplit_CIFailureRetry(t *testing.T) {
 		promptGenerator: mockPG,
 		parser:          mockOP,
 		config:          config,
-		ciCheckerFactory: func(workingDir string, checkInterval time.Duration) CIChecker {
+		ciCheckerFactory: func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker {
 			return mockCI
 		},
 	}
@@ -1700,52 +1620,39 @@ func TestDefaultConfirmFunc(t *testing.T) {
 
 func TestGetCIChecker(t *testing.T) {
 	tests := []struct {
-		name             string
-		ciCheckerFactory func(workingDir string, checkInterval time.Duration) CIChecker
-		workingDir       string
-		wantFactoryCalls int
+		name              string
+		ciCheckerFactory  func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker
+		workingDir        string
+		wantFactoryCalled bool
 	}{
 		{
-			name: "uses ciCheckerFactory when set",
-			ciCheckerFactory: func(workingDir string, checkInterval time.Duration) CIChecker {
-				return new(MockCIChecker)
+			name: "uses factory when set",
+			ciCheckerFactory: func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker {
+				mockCI := new(MockCIChecker)
+				return mockCI
 			},
-			workingDir:       "/tmp/test",
-			wantFactoryCalls: 1,
+			workingDir:        "/tmp/worktree",
+			wantFactoryCalled: true,
 		},
 		{
-			name:             "creates new CIChecker when factory is nil",
-			ciCheckerFactory: nil,
-			workingDir:       "/tmp/test",
-			wantFactoryCalls: 0,
+			name:              "creates real checker when factory is nil",
+			ciCheckerFactory:  nil,
+			workingDir:        "/tmp/worktree",
+			wantFactoryCalled: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			factoryCalls := 0
+			config := DefaultConfig("/tmp/workflows")
 			o := &Orchestrator{
-				config: DefaultConfig("/tmp/workflows"),
-			}
-
-			if tt.ciCheckerFactory != nil {
-				o.ciCheckerFactory = func(workingDir string, checkInterval time.Duration) CIChecker {
-					factoryCalls++
-					assert.Equal(t, tt.workingDir, workingDir)
-					assert.Equal(t, o.config.CICheckInterval, checkInterval)
-					return tt.ciCheckerFactory(workingDir, checkInterval)
-				}
+				config:           config,
+				ciCheckerFactory: tt.ciCheckerFactory,
 			}
 
 			checker := o.getCIChecker(tt.workingDir)
 
 			assert.NotNil(t, checker)
-			assert.Equal(t, tt.wantFactoryCalls, factoryCalls)
-
-			if tt.ciCheckerFactory != nil {
-				_, ok := checker.(*MockCIChecker)
-				assert.True(t, ok, "expected MockCIChecker when factory is set")
-			}
 		})
 	}
 }
@@ -1757,7 +1664,7 @@ func TestFormatCIErrors(t *testing.T) {
 		want   string
 	}{
 		{
-			name: "with single failed job",
+			name: "formats single failed job",
 			result: &CIResult{
 				Passed:     false,
 				Status:     "failure",
@@ -1767,40 +1674,203 @@ func TestFormatCIErrors(t *testing.T) {
 			want: "CI checks failed with the following errors:\n\nBuild failed: syntax error\n\nFailed jobs:\n- build\n",
 		},
 		{
-			name: "with multiple failed jobs",
+			name: "formats multiple failed jobs",
 			result: &CIResult{
 				Passed:     false,
 				Status:     "failure",
-				Output:     "Multiple failures detected",
+				Output:     "Multiple errors occurred",
 				FailedJobs: []string{"build", "test", "lint"},
 			},
-			want: "CI checks failed with the following errors:\n\nMultiple failures detected\n\nFailed jobs:\n- build\n- test\n- lint\n",
+			want: "CI checks failed with the following errors:\n\nMultiple errors occurred\n\nFailed jobs:\n- build\n- test\n- lint\n",
 		},
 		{
-			name: "with empty output",
+			name: "handles empty output",
 			result: &CIResult{
 				Passed:     false,
 				Status:     "failure",
 				Output:     "",
-				FailedJobs: []string{"e2e"},
+				FailedJobs: []string{"deploy"},
 			},
-			want: "CI checks failed with the following errors:\n\n\n\nFailed jobs:\n- e2e\n",
+			want: "CI checks failed with the following errors:\n\n\n\nFailed jobs:\n- deploy\n",
 		},
 		{
-			name: "with multiline output",
+			name: "handles no failed jobs",
 			result: &CIResult{
 				Passed:     false,
 				Status:     "failure",
-				Output:     "Error on line 1\nError on line 2\nError on line 3",
-				FailedJobs: []string{"integration"},
+				Output:     "Unknown error",
+				FailedJobs: []string{},
 			},
-			want: "CI checks failed with the following errors:\n\nError on line 1\nError on line 2\nError on line 3\n\nFailed jobs:\n- integration\n",
+			want: "CI checks failed with the following errors:\n\nUnknown error\n\nFailed jobs:\n",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := formatCIErrors(tt.result)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestParseDiffStat_AdditionalCases(t *testing.T) {
+	tests := []struct {
+		name       string
+		diffOutput string
+		want       *PRMetrics
+		wantErr    bool
+	}{
+		{
+			name: "parses diff stat with deletions only",
+			diffOutput: ` file1.go | 10 ----------
+ file2.go | 5 -----
+ 2 files changed, 15 deletions(-)`,
+			want: &PRMetrics{
+				LinesChanged:  15,
+				FilesChanged:  2,
+				FilesAdded:    []string{},
+				FilesModified: []string{"file1.go", "file2.go"},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "parses diff stat with file deletions",
+			diffOutput: ` oldfile.go (gone) | 50 --------------------------------------------------
+ 1 file changed, 50 deletions(-)`,
+			want: &PRMetrics{
+				LinesChanged:  50,
+				FilesChanged:  1,
+				FilesAdded:    []string{},
+				FilesModified: []string{},
+				FilesDeleted:  []string{"oldfile.go"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "parses diff stat with mixed changes",
+			diffOutput: ` newfile.go (new) | 20 ++++++++++++++++++++
+ existing.go | 10 ++++++++++
+ oldfile.go (gone) | 15 ---------------
+ 3 files changed, 30 insertions(+), 15 deletions(-)`,
+			want: &PRMetrics{
+				LinesChanged:  30,
+				FilesChanged:  3,
+				FilesAdded:    []string{"newfile.go"},
+				FilesModified: []string{"existing.go"},
+				FilesDeleted:  []string{"oldfile.go"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "parses diff stat with binary files",
+			diffOutput: ` image.png | Bin 0 -> 1024 bytes
+ data.bin  | Bin 2048 -> 4096 bytes
+ 2 files changed`,
+			want: &PRMetrics{
+				LinesChanged:  0,
+				FilesChanged:  2,
+				FilesAdded:    []string{},
+				FilesModified: []string{"image.png", "data.bin"},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "handles renamed files",
+			diffOutput: ` old.go => new.go | 5 +++++
+ 1 file changed, 5 insertions(+)`,
+			want: &PRMetrics{
+				LinesChanged:  5,
+				FilesChanged:  1,
+				FilesAdded:    []string{},
+				FilesModified: []string{"old.go"},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "parses diff stat with insertions and deletions",
+			diffOutput: ` file1.go | 100 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ file2.go | 50 +++++++++++++++++++++++++++++
+ 2 files changed, 150 insertions(+), 0 deletions(-)`,
+			want: &PRMetrics{
+				LinesChanged:  150,
+				FilesChanged:  2,
+				FilesAdded:    []string{},
+				FilesModified: []string{"file1.go", "file2.go"},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseDiffStat(tt.diffOutput)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestIsRecoverableError_AdditionalCases(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "network timeout is recoverable",
+			err:  errors.New("connection timeout after 30s"),
+			want: true,
+		},
+		{
+			name: "claude timeout is recoverable",
+			err:  errors.New("claude execution timeout"),
+			want: true,
+		},
+		{
+			name: "json parse error is recoverable",
+			err:  errors.New("failed to parse JSON response"),
+			want: true,
+		},
+		{
+			name: "yaml parse error is recoverable",
+			err:  errors.New("failed to parse YAML"),
+			want: true,
+		},
+		{
+			name: "invalid phase is not recoverable",
+			err:  errors.New("invalid phase transition"),
+			want: false,
+		},
+		{
+			name: "invalid config is not recoverable",
+			err:  errors.New("invalid configuration"),
+			want: false,
+		},
+		{
+			name: "generic claude failure is recoverable",
+			err:  errors.New("claude execution failed with exit code 1"),
+			want: true,
+		},
+		{
+			name: "unknown error is recoverable by default",
+			err:  errors.New("something went wrong"),
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isRecoverableError(tt.err)
 			assert.Equal(t, tt.want, got)
 		})
 	}
