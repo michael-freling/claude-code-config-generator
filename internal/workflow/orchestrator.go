@@ -107,6 +107,18 @@ func (o *Orchestrator) SetConfirmFunc(fn func(plan *Plan) (bool, string, error))
 
 // Start initializes and runs a new workflow
 func (o *Orchestrator) Start(ctx context.Context, name, description string, wfType WorkflowType) error {
+	// Check if a workflow with this name already exists
+	if o.stateManager.WorkflowExists(name) {
+		existingState, err := o.stateManager.LoadState(name)
+		if err == nil && existingState.CurrentPhase == PhaseFailed {
+			// Delete failed workflow to allow restart with same name
+			if err := o.stateManager.DeleteWorkflow(name); err != nil {
+				return fmt.Errorf("failed to delete failed workflow: %w", err)
+			}
+		}
+		// If not failed or couldn't load state, InitState will handle the error
+	}
+
 	state, err := o.stateManager.InitState(name, description, wfType)
 	if err != nil {
 		return fmt.Errorf("failed to initialize workflow: %w", err)

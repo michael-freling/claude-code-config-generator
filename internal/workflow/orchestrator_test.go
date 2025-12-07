@@ -612,7 +612,45 @@ func TestOrchestrator_Start(t *testing.T) {
 		{
 			name: "fails when InitState fails",
 			setupMocks: func(sm *MockStateManager) {
+				sm.On("WorkflowExists", "test-workflow").Return(false)
 				sm.On("InitState", "test-workflow", "test description", WorkflowTypeFeature).Return((*WorkflowState)(nil), errors.New("init failed"))
+			},
+			wantErr: true,
+		},
+		{
+			name: "deletes and restarts failed workflow",
+			setupMocks: func(sm *MockStateManager) {
+				sm.On("WorkflowExists", "test-workflow").Return(true)
+				sm.On("LoadState", "test-workflow").Return(&WorkflowState{
+					Name:         "test-workflow",
+					CurrentPhase: PhaseFailed,
+				}, nil)
+				sm.On("DeleteWorkflow", "test-workflow").Return(nil)
+				sm.On("InitState", "test-workflow", "test description", WorkflowTypeFeature).Return((*WorkflowState)(nil), errors.New("init failed"))
+			},
+			wantErr: true,
+		},
+		{
+			name: "fails when workflow exists and not failed",
+			setupMocks: func(sm *MockStateManager) {
+				sm.On("WorkflowExists", "test-workflow").Return(true)
+				sm.On("LoadState", "test-workflow").Return(&WorkflowState{
+					Name:         "test-workflow",
+					CurrentPhase: PhaseImplementation,
+				}, nil)
+				sm.On("InitState", "test-workflow", "test description", WorkflowTypeFeature).Return((*WorkflowState)(nil), ErrWorkflowExists)
+			},
+			wantErr: true,
+		},
+		{
+			name: "fails when deleting failed workflow fails",
+			setupMocks: func(sm *MockStateManager) {
+				sm.On("WorkflowExists", "test-workflow").Return(true)
+				sm.On("LoadState", "test-workflow").Return(&WorkflowState{
+					Name:         "test-workflow",
+					CurrentPhase: PhaseFailed,
+				}, nil)
+				sm.On("DeleteWorkflow", "test-workflow").Return(errors.New("delete failed"))
 			},
 			wantErr: true,
 		},
