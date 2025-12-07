@@ -36,7 +36,13 @@ func NewPRManager(workingDir string) PRManager {
 
 // CreatePR creates a new PR for the current branch
 func (p *prManager) CreatePR(ctx context.Context, title, body string) (int, error) {
-	cmd := exec.CommandContext(ctx, "gh", "pr", "create", "--title", title, "--body", body)
+	// Get current branch name to use with --head flag
+	branchName, err := p.getCurrentBranch(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get current branch: %w", err)
+	}
+
+	cmd := exec.CommandContext(ctx, "gh", "pr", "create", "--title", title, "--body", body, "--head", branchName)
 	if p.workingDir != "" {
 		cmd.Dir = p.workingDir
 	}
@@ -45,7 +51,7 @@ func (p *prManager) CreatePR(ctx context.Context, title, body string) (int, erro
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	err = cmd.Run()
 	if err != nil {
 		return 0, fmt.Errorf("failed to create PR: %w (stderr: %s)", err, stderr.String())
 	}
@@ -59,6 +65,23 @@ func (p *prManager) CreatePR(ctx context.Context, title, body string) (int, erro
 	}
 
 	return prNumber, nil
+}
+
+// getCurrentBranch returns the current branch name
+func (p *prManager) getCurrentBranch(ctx context.Context) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD")
+	if p.workingDir != "" {
+		cmd.Dir = p.workingDir
+	}
+
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+
+	return strings.TrimSpace(stdout.String()), nil
 }
 
 // GetCurrentBranchPR returns the PR number for the current branch
@@ -112,22 +135,12 @@ func (p *prManager) EnsurePR(ctx context.Context, title, body string) (int, erro
 
 // PushBranch pushes the current branch to origin with upstream tracking
 func (p *prManager) PushBranch(ctx context.Context) error {
-	// Get current branch name
-	branchCmd := exec.CommandContext(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD")
-	if p.workingDir != "" {
-		branchCmd.Dir = p.workingDir
-	}
-
-	var branchOut bytes.Buffer
-	branchCmd.Stdout = &branchOut
-
-	if err := branchCmd.Run(); err != nil {
+	branchName, err := p.getCurrentBranch(ctx)
+	if err != nil {
 		return fmt.Errorf("failed to get current branch: %w", err)
 	}
 
-	branchName := strings.TrimSpace(branchOut.String())
-
-	// Push with upstream tracking
+	// Push with upstream tracking and force to ensure it's up to date
 	pushCmd := exec.CommandContext(ctx, "git", "push", "-u", "origin", branchName)
 	if p.workingDir != "" {
 		pushCmd.Dir = p.workingDir
