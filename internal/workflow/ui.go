@@ -274,13 +274,13 @@ func indentText(text string, spaces int) string {
 
 // StreamingSpinner provides a spinner that also displays streaming progress events
 type StreamingSpinner struct {
-	message     string
-	done        chan bool
-	running     bool
-	mu          sync.Mutex
-	lastTool    string
-	toolCount   int
-	startTime   time.Time
+	message   string
+	done      chan bool
+	running   bool
+	mu        sync.Mutex
+	lastTool  string
+	toolCount int
+	startTime time.Time
 }
 
 // NewStreamingSpinner creates a new streaming spinner with the given message
