@@ -14,6 +14,21 @@ import (
 // ErrCICheckTimeout is returned when CI check command times out
 var ErrCICheckTimeout = errors.New("CI check command timed out")
 
+// CIProgressEvent represents a CI check progress update
+type CIProgressEvent struct {
+	Type         string // "waiting", "checking", "retry", "status"
+	Elapsed      time.Duration
+	Message      string
+	JobsPassed   int
+	JobsFailed   int
+	JobsPending  int
+	RetryAttempt int
+	NextCheckIn  time.Duration
+}
+
+// CIProgressCallback is called when CI check progress updates
+type CIProgressCallback func(event CIProgressEvent)
+
 // CIChecker checks CI status on GitHub
 type CIChecker interface {
 	// CheckCI checks CI status. If prNumber is 0, checks the current branch's PR.
@@ -22,6 +37,8 @@ type CIChecker interface {
 	WaitForCI(ctx context.Context, prNumber int, timeout time.Duration) (*CIResult, error)
 	// WaitForCIWithOptions waits for CI with options. If prNumber is 0, checks the current branch's PR.
 	WaitForCIWithOptions(ctx context.Context, prNumber int, timeout time.Duration, opts CheckCIOptions) (*CIResult, error)
+	// WaitForCIWithProgress waits for CI with progress reporting
+	WaitForCIWithProgress(ctx context.Context, prNumber int, timeout time.Duration, opts CheckCIOptions, onProgress CIProgressCallback) (*CIResult, error)
 }
 
 // CIResult represents the result of CI checks
@@ -154,6 +171,11 @@ func (c *ciChecker) WaitForCI(ctx context.Context, prNumber int, timeout time.Du
 
 // WaitForCIWithOptions waits for CI to complete with polling and optional e2e filtering. If prNumber is 0, checks the current branch's PR.
 func (c *ciChecker) WaitForCIWithOptions(ctx context.Context, prNumber int, timeout time.Duration, opts CheckCIOptions) (*CIResult, error) {
+	return c.WaitForCIWithProgress(ctx, prNumber, timeout, opts, nil)
+}
+
+// WaitForCIWithProgress waits for CI with progress reporting
+func (c *ciChecker) WaitForCIWithProgress(ctx context.Context, prNumber int, timeout time.Duration, opts CheckCIOptions, onProgress CIProgressCallback) (*CIResult, error) {
 	if timeout == 0 {
 		timeout = 30 * time.Minute
 	}
@@ -165,27 +187,77 @@ func (c *ciChecker) WaitForCIWithOptions(ctx context.Context, prNumber int, time
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	startTime := time.Now()
 	ticker := time.NewTicker(c.checkInterval)
 	defer ticker.Stop()
 
 	initialDelay := 1 * time.Minute
-	select {
-	case <-time.After(initialDelay):
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	progressTicker := time.NewTicker(5 * time.Second)
+	defer progressTicker.Stop()
+
+	for {
+		select {
+		case <-time.After(initialDelay):
+			goto checkLoop
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-progressTicker.C:
+			if onProgress != nil {
+				elapsed := time.Since(startTime)
+				remaining := initialDelay - elapsed
+				if remaining < 0 {
+					remaining = 0
+				}
+				onProgress(CIProgressEvent{
+					Type:        "waiting",
+					Elapsed:     elapsed,
+					Message:     "Initial delay before checking CI",
+					NextCheckIn: remaining,
+				})
+			}
+		}
 	}
 
+checkLoop:
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, fmt.Errorf("CI check timeout after %s", timeout)
 		case <-ticker.C:
+			if onProgress != nil {
+				onProgress(CIProgressEvent{
+					Type:    "checking",
+					Elapsed: time.Since(startTime),
+					Message: "Checking CI status",
+				})
+			}
+
 			result, err := c.CheckCI(ctx, prNumber)
 			if err != nil {
 				if errors.Is(err, ErrCICheckTimeout) {
+					if onProgress != nil {
+						onProgress(CIProgressEvent{
+							Type:    "retry",
+							Elapsed: time.Since(startTime),
+							Message: "Command timeout, retrying",
+						})
+					}
 					continue
 				}
 				return nil, err
+			}
+
+			passed, failed, pending := countJobStatuses(result.Output)
+			if onProgress != nil {
+				onProgress(CIProgressEvent{
+					Type:        "status",
+					Elapsed:     time.Since(startTime),
+					Message:     fmt.Sprintf("CI status: %s", result.Status),
+					JobsPassed:  passed,
+					JobsFailed:  failed,
+					JobsPending: pending,
+					NextCheckIn: c.checkInterval,
+				})
 			}
 
 			if result.Status == "success" || result.Status == "failure" {
@@ -241,6 +313,36 @@ func parseCIOutput(output string) (string, []string) {
 	}
 
 	return "failure", failedJobs
+}
+
+// countJobStatuses counts passed, failed, and pending jobs from CI output
+func countJobStatuses(output string) (passed, failed, pending int) {
+	lines := strings.Split(output, "\n")
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+
+		status := fields[0]
+
+		switch status {
+		case "✓", "pass", "success":
+			passed++
+		case "✗", "fail", "failure":
+			failed++
+		case "○", "*", "pending", "queued", "in_progress":
+			pending++
+		}
+	}
+
+	return passed, failed, pending
 }
 
 // filterE2EFailures filters out e2e test failures from CI result
