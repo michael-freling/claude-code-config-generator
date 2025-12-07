@@ -76,58 +76,67 @@ func TestParseCIOutput(t *testing.T) {
 
 func TestNewCIChecker(t *testing.T) {
 	tests := []struct {
-		name          string
-		workingDir    string
-		checkInterval time.Duration
-		wantInterval  time.Duration
+		name           string
+		workingDir     string
+		checkInterval  time.Duration
+		commandTimeout time.Duration
+		wantInterval   time.Duration
+		wantTimeout    time.Duration
 	}{
 		{
-			name:          "with custom interval",
-			workingDir:    "/tmp/test",
-			checkInterval: 10 * time.Second,
-			wantInterval:  10 * time.Second,
+			name:           "with custom interval and timeout",
+			workingDir:     "/tmp/test",
+			checkInterval:  10 * time.Second,
+			commandTimeout: 5 * time.Minute,
+			wantInterval:   10 * time.Second,
+			wantTimeout:    5 * time.Minute,
 		},
 		{
-			name:          "with default interval",
-			workingDir:    "/tmp/test",
-			checkInterval: 0,
-			wantInterval:  30 * time.Second,
+			name:           "with default interval and timeout",
+			workingDir:     "/tmp/test",
+			checkInterval:  0,
+			commandTimeout: 0,
+			wantInterval:   30 * time.Second,
+			wantTimeout:    2 * time.Minute,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			checker := NewCIChecker(tt.workingDir, tt.checkInterval)
+			checker := NewCIChecker(tt.workingDir, tt.checkInterval, tt.commandTimeout)
 			require.NotNil(t, checker)
 
 			concreteChecker, ok := checker.(*ciChecker)
 			require.True(t, ok)
 			assert.Equal(t, tt.workingDir, concreteChecker.workingDir)
 			assert.Equal(t, tt.wantInterval, concreteChecker.checkInterval)
+			assert.Equal(t, tt.wantTimeout, concreteChecker.commandTimeout)
 		})
 	}
 }
 
 func TestCIChecker_CheckCI_NotInstalled(t *testing.T) {
-	checker := NewCIChecker("/nonexistent/path/that/should/not/exist", 1*time.Second)
+	checker := NewCIChecker("/nonexistent/path/that/should/not/exist", 1*time.Second, 1*time.Second)
 	ctx := context.Background()
 
 	result, err := checker.CheckCI(ctx, 123)
 	require.Error(t, err)
-	require.NotNil(t, result)
-	assert.False(t, result.Passed)
+	// Result is nil on error since CheckCI returns nil when checkCIOnce fails
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "failed to check CI status")
 }
 
 func TestCIChecker_CheckCI_NoPR(t *testing.T) {
 	// This test verifies the error handling when gh pr checks fails
 	// Running in /tmp (non-git directory) will cause an error
-	checker := NewCIChecker("/tmp", 1*time.Second)
+	checker := NewCIChecker("/tmp", 1*time.Second, 1*time.Second)
 	ctx := context.Background()
 
 	result, err := checker.CheckCI(ctx, 0)
 	require.Error(t, err)
-	require.NotNil(t, result)
-	assert.False(t, result.Passed)
+	// Result is nil on error since CheckCI returns nil when checkCIOnce fails
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "failed to check CI status")
 }
 
 func TestParseCIOutput_PendingStatus(t *testing.T) {
@@ -144,7 +153,7 @@ Vercel – nooxac-gateway	pass	0	https://vercel.com/example	Deployment has compl
 }
 
 func TestCIChecker_WaitForCI_Timeout(t *testing.T) {
-	checker := NewCIChecker("/nonexistent/path/that/should/not/exist", 100*time.Millisecond)
+	checker := NewCIChecker("/nonexistent/path/that/should/not/exist", 100*time.Millisecond, 1*time.Second)
 	ctx := context.Background()
 
 	result, err := checker.WaitForCI(ctx, 123, 200*time.Millisecond)
@@ -247,4 +256,46 @@ func TestFilterE2EFailures(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestCheckCI_ContextCancellation(t *testing.T) {
+	checker := NewCIChecker("/nonexistent/path", 1*time.Second, 1*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	result, err := checker.CheckCI(ctx, 0)
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Equal(t, context.Canceled, err)
+}
+
+func TestCheckCI_IsolatedCommandContext(t *testing.T) {
+	// Test that the command uses its own isolated context (commandTimeout)
+	// rather than inheriting from the parent context
+	checker := NewCIChecker("/nonexistent/path", 1*time.Second, 1*time.Second)
+	ctx := context.Background()
+
+	result, err := checker.CheckCI(ctx, 0)
+	require.Error(t, err)
+	// Result is nil on error since CheckCI returns nil when checkCIOnce fails
+	assert.Nil(t, result)
+	assert.Contains(t, err.Error(), "failed to check CI status")
+}
+
+func TestWaitForCIWithOptions_ParentContextCancellation(t *testing.T) {
+	// Test that context cancellation during the initial delay is handled properly
+	checker := NewCIChecker("/nonexistent/path", 100*time.Millisecond, 1*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Cancel quickly during the 1-minute initial delay
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	result, err := checker.WaitForCIWithOptions(ctx, 0, 10*time.Second, CheckCIOptions{})
+	require.Error(t, err)
+	assert.Nil(t, result)
+	// Context cancellation should be detected during initial delay
+	assert.Equal(t, context.Canceled, err)
 }

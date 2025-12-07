@@ -21,6 +21,7 @@ type Config struct {
 	DangerouslySkipPermissions bool
 	CICheckInterval            time.Duration
 	CICheckTimeout             time.Duration
+	GHCommandTimeout           time.Duration
 	MaxFixAttempts             int
 }
 
@@ -42,6 +43,7 @@ func DefaultConfig(baseDir string) *Config {
 		DangerouslySkipPermissions: false,
 		CICheckInterval:            30 * time.Second,
 		CICheckTimeout:             30 * time.Minute,
+		GHCommandTimeout:           2 * time.Minute,
 		MaxFixAttempts:             10,
 		Timeouts: PhaseTimeouts{
 			Planning:       1 * time.Hour,
@@ -63,7 +65,7 @@ type Orchestrator struct {
 	worktreeManager WorktreeManager
 
 	// For testing - if nil, creates real checker
-	ciCheckerFactory func(workingDir string, checkInterval time.Duration) CIChecker
+	ciCheckerFactory func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker
 }
 
 // NewOrchestrator creates orchestrator with default config
@@ -988,7 +990,7 @@ func formatCIErrors(result *CIResult) string {
 // getCIChecker creates or retrieves a CIChecker for the given working directory
 func (o *Orchestrator) getCIChecker(workingDir string) CIChecker {
 	if o.ciCheckerFactory != nil {
-		return o.ciCheckerFactory(workingDir, o.config.CICheckInterval)
+		return o.ciCheckerFactory(workingDir, o.config.CICheckInterval, o.config.GHCommandTimeout)
 	}
-	return NewCIChecker(workingDir, o.config.CICheckInterval)
+	return NewCIChecker(workingDir, o.config.CICheckInterval, o.config.GHCommandTimeout)
 }

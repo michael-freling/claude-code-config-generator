@@ -595,7 +595,7 @@ func TestOrchestrator_executeImplementation(t *testing.T) {
 				parser:          mockOP,
 				config:          DefaultConfig("/tmp/workflows"),
 				worktreeManager: mockWM,
-				ciCheckerFactory: func(workingDir string, checkInterval time.Duration) CIChecker {
+				ciCheckerFactory: func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker {
 					return mockCI
 				},
 			}
@@ -1323,7 +1323,7 @@ func TestOrchestrator_executePRSplit_CIFailureRetry(t *testing.T) {
 		promptGenerator: mockPG,
 		parser:          mockOP,
 		config:          config,
-		ciCheckerFactory: func(workingDir string, checkInterval time.Duration) CIChecker {
+		ciCheckerFactory: func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker {
 			return mockCI
 		},
 	}
