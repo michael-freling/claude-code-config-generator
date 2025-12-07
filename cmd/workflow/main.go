@@ -54,19 +54,16 @@ func newRootCmd() *cobra.Command {
 }
 
 func createOrchestrator() (*workflow.Orchestrator, error) {
-	config := &workflow.Config{
-		BaseDir:    baseDir,
-		MaxLines:   maxLines,
-		MaxFiles:   maxFiles,
-		ClaudePath: claudePath,
-		Timeouts: workflow.PhaseTimeouts{
-			Planning:       timeoutPlanning,
-			Implementation: timeoutImplement,
-			Refactoring:    timeoutRefactoring,
-			PRSplit:        timeoutPRSplit,
-		},
+	config := workflow.DefaultConfig(baseDir)
+	config.MaxLines = maxLines
+	config.MaxFiles = maxFiles
+	config.ClaudePath = claudePath
+	config.Timeouts = workflow.PhaseTimeouts{
+		Planning:       timeoutPlanning,
+		Implementation: timeoutImplement,
+		Refactoring:    timeoutRefactoring,
+		PRSplit:        timeoutPRSplit,
 	}
-
 	return workflow.NewOrchestratorWithConfig(config)
 }
 
