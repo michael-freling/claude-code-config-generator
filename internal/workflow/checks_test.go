@@ -23,7 +23,7 @@ func TestParseCIOutput(t *testing.T) {
 			wantFailedJobs: []string{},
 		},
 		{
-			name: "all checks passed",
+			name: "all checks passed - symbol format",
 			output: `✓ build
 ✓ test
 ✓ lint`,
@@ -31,7 +31,7 @@ func TestParseCIOutput(t *testing.T) {
 			wantFailedJobs: []string{},
 		},
 		{
-			name: "some checks failed",
+			name: "some checks failed - symbol format",
 			output: `✓ build
 ✗ test
 ✓ lint`,
@@ -39,7 +39,7 @@ func TestParseCIOutput(t *testing.T) {
 			wantFailedJobs: []string{"test"},
 		},
 		{
-			name: "checks pending",
+			name: "checks pending - symbol format",
 			output: `✓ build
 ○ test
 ○ lint`,
@@ -47,7 +47,7 @@ func TestParseCIOutput(t *testing.T) {
 			wantFailedJobs: []string{},
 		},
 		{
-			name: "mixed status with pending",
+			name: "mixed status with pending - symbol format",
 			output: `✓ build
 ✗ test
 ○ lint`,
@@ -55,13 +55,43 @@ func TestParseCIOutput(t *testing.T) {
 			wantFailedJobs: []string{"test"},
 		},
 		{
-			name: "multiple failed jobs",
+			name: "multiple failed jobs - symbol format",
 			output: `✓ build
 ✗ test-unit
 ✗ test-integration
 ✓ lint`,
 			wantStatus:     "failure",
 			wantFailedJobs: []string{"test-unit", "test-integration"},
+		},
+		// Tab-separated format (actual gh pr checks output)
+		{
+			name:           "all checks passed - tab format",
+			output:         "build\tpass\t14s\thttps://github.com/example/actions/runs/123",
+			wantStatus:     "success",
+			wantFailedJobs: []string{},
+		},
+		{
+			name: "multiple checks passed - tab format",
+			output: `build	pass	14s	https://github.com/example/actions/runs/123
+test	pass	30s	https://github.com/example/actions/runs/124
+lint	pass	10s	https://github.com/example/actions/runs/125`,
+			wantStatus:     "success",
+			wantFailedJobs: []string{},
+		},
+		{
+			name: "some checks failed - tab format",
+			output: `build	pass	14s	https://github.com/example/actions/runs/123
+test	fail	30s	https://github.com/example/actions/runs/124
+lint	pass	10s	https://github.com/example/actions/runs/125`,
+			wantStatus:     "failure",
+			wantFailedJobs: []string{"test"},
+		},
+		{
+			name: "checks pending - tab format",
+			output: `build	pass	14s	https://github.com/example/actions/runs/123
+test	pending	0s	https://github.com/example/actions/runs/124`,
+			wantStatus:     "pending",
+			wantFailedJobs: []string{},
 		},
 	}
 
@@ -70,6 +100,58 @@ func TestParseCIOutput(t *testing.T) {
 			gotStatus, gotFailedJobs := parseCIOutput(tt.output)
 			assert.Equal(t, tt.wantStatus, gotStatus)
 			assert.Equal(t, tt.wantFailedJobs, gotFailedJobs)
+		})
+	}
+}
+
+func TestCountJobStatuses(t *testing.T) {
+	tests := []struct {
+		name        string
+		output      string
+		wantPassed  int
+		wantFailed  int
+		wantPending int
+	}{
+		{
+			name:        "empty output",
+			output:      "",
+			wantPassed:  0,
+			wantFailed:  0,
+			wantPending: 0,
+		},
+		{
+			name:        "single passed job - tab format",
+			output:      "build\tpass\t14s\thttps://github.com/example/actions/runs/123",
+			wantPassed:  1,
+			wantFailed:  0,
+			wantPending: 0,
+		},
+		{
+			name: "multiple jobs - tab format",
+			output: `build	pass	14s	https://github.com/example/actions/runs/123
+test	fail	30s	https://github.com/example/actions/runs/124
+lint	pending	0s	https://github.com/example/actions/runs/125`,
+			wantPassed:  1,
+			wantFailed:  1,
+			wantPending: 1,
+		},
+		{
+			name: "symbol format",
+			output: `✓ build
+✗ test
+○ lint`,
+			wantPassed:  1,
+			wantFailed:  1,
+			wantPending: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotPassed, gotFailed, gotPending := countJobStatuses(tt.output)
+			assert.Equal(t, tt.wantPassed, gotPassed, "passed count mismatch")
+			assert.Equal(t, tt.wantFailed, gotFailed, "failed count mismatch")
+			assert.Equal(t, tt.wantPending, gotPending, "pending count mismatch")
 		})
 	}
 }

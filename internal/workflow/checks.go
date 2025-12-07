@@ -337,6 +337,9 @@ checkLoop:
 }
 
 // parseCIOutput parses gh pr checks output to extract status and failed jobs
+// Handles both formats:
+// - "✓ build" (status first, then job name)
+// - "build	pass	14s	https://..." (job name first, then status)
 func parseCIOutput(output string) (string, []string) {
 	lines := strings.Split(output, "\n")
 	failedJobs := []string{}
@@ -355,8 +358,8 @@ func parseCIOutput(output string) (string, []string) {
 			continue
 		}
 
-		status := fields[0]
-		jobName := strings.Join(fields[1:], " ")
+		// Try to find status - check first field, then second field
+		status, jobName := extractStatusAndJobName(fields)
 
 		switch status {
 		case "✓", "pass", "success":
@@ -381,6 +384,31 @@ func parseCIOutput(output string) (string, []string) {
 	return "failure", failedJobs
 }
 
+// extractStatusAndJobName extracts status and job name from fields
+// Handles both formats:
+// - ["✓", "build"] -> status="✓", jobName="build"
+// - ["build", "pass", "14s", "https://..."] -> status="pass", jobName="build"
+func extractStatusAndJobName(fields []string) (status, jobName string) {
+	statusValues := map[string]bool{
+		"✓": true, "pass": true, "success": true,
+		"✗": true, "fail": true, "failure": true,
+		"○": true, "*": true, "pending": true, "queued": true, "in_progress": true,
+	}
+
+	// Check if first field is a status indicator
+	if statusValues[fields[0]] {
+		return fields[0], strings.Join(fields[1:], " ")
+	}
+
+	// Check if second field is a status indicator (tab-separated format)
+	if len(fields) >= 2 && statusValues[fields[1]] {
+		return fields[1], fields[0]
+	}
+
+	// Default: assume first field is status
+	return fields[0], strings.Join(fields[1:], " ")
+}
+
 // countJobStatuses counts passed, failed, and pending jobs from CI output
 func countJobStatuses(output string) (passed, failed, pending int) {
 	lines := strings.Split(output, "\n")
@@ -396,7 +424,7 @@ func countJobStatuses(output string) (passed, failed, pending int) {
 			continue
 		}
 
-		status := fields[0]
+		status, _ := extractStatusAndJobName(fields)
 
 		switch status {
 		case "✓", "pass", "success":
