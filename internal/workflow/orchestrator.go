@@ -54,14 +54,17 @@ func DefaultConfig(baseDir string) *Config {
 
 // Orchestrator manages workflow execution
 type Orchestrator struct {
-	stateManager     StateManager
-	executor         ClaudeExecutor
-	promptGenerator  PromptGenerator
-	parser           OutputParser
-	config           *Config
-	confirmFunc      func(plan *Plan) (bool, string, error)
-	preCommitChecker PreCommitChecker
-	ciChecker        CIChecker
+	stateManager    StateManager
+	executor        ClaudeExecutor
+	promptGenerator PromptGenerator
+	parser          OutputParser
+	config          *Config
+	confirmFunc     func(plan *Plan) (bool, string, error)
+	worktreeManager WorktreeManager
+
+	// For testing - if nil, creates real checkers
+	preCommitCheckerFactory func(workingDir string) PreCommitChecker
+	ciCheckerFactory        func(workingDir string, checkInterval time.Duration) CIChecker
 }
 
 // NewOrchestrator creates orchestrator with default config
@@ -87,18 +90,16 @@ func NewOrchestratorWithConfig(config *Config) (*Orchestrator, error) {
 	executor := NewClaudeExecutorWithPath(config.ClaudePath)
 	stateManager := NewStateManager(config.BaseDir)
 	parser := NewOutputParser()
-	preCommitChecker := NewPreCommitChecker(config.BaseDir)
-	ciChecker := NewCIChecker(config.BaseDir, config.CICheckInterval)
+	worktreeManager := NewWorktreeManager(config.BaseDir)
 
 	return &Orchestrator{
-		stateManager:     stateManager,
-		executor:         executor,
-		promptGenerator:  promptGen,
-		parser:           parser,
-		config:           config,
-		confirmFunc:      defaultConfirmFunc,
-		preCommitChecker: preCommitChecker,
-		ciChecker:        ciChecker,
+		stateManager:    stateManager,
+		executor:        executor,
+		promptGenerator: promptGen,
+		parser:          parser,
+		config:          config,
+		confirmFunc:     defaultConfirmFunc,
+		worktreeManager: worktreeManager,
 	}, nil
 }
 
@@ -378,6 +379,18 @@ func (o *Orchestrator) executeImplementation(ctx context.Context, state *Workflo
 		return fmt.Errorf("failed to save state: %w", err)
 	}
 
+	if state.WorktreePath == "" {
+		worktreePath, err := o.worktreeManager.CreateWorktree(state.Name)
+		if err != nil {
+			return o.failWorkflow(state, fmt.Errorf("failed to create worktree: %w", err))
+		}
+		state.WorktreePath = worktreePath
+		if err := o.stateManager.SaveState(state.Name, state); err != nil {
+			return fmt.Errorf("failed to save state with worktree path: %w", err)
+		}
+		fmt.Printf("%s Created worktree at: %s\n", Green("✓"), worktreePath)
+	}
+
 	plan, err := o.stateManager.LoadPlan(state.Name)
 	if err != nil {
 		return o.failWorkflow(state, fmt.Errorf("failed to load plan: %w", err))
@@ -409,6 +422,7 @@ func (o *Orchestrator) executeImplementation(ctx context.Context, state *Workflo
 			Timeout:                    o.config.Timeouts.Implementation,
 			JSONSchema:                 ImplementationSummarySchema,
 			DangerouslySkipPermissions: o.config.DangerouslySkipPermissions,
+			WorkingDirectory:           state.WorktreePath,
 		}, spinner.OnProgress)
 
 		if err != nil {
@@ -450,7 +464,12 @@ func (o *Orchestrator) executeImplementation(ctx context.Context, state *Workflo
 		checkSpinner := NewSpinner("Running pre-commit checks...")
 		checkSpinner.Start()
 
-		preCommitResult, err := o.preCommitChecker.RunPreCommit(ctx)
+		workingDir := state.WorktreePath
+		if workingDir == "" {
+			workingDir = o.config.BaseDir
+		}
+		preCommitChecker := o.getPreCommitChecker(workingDir)
+		preCommitResult, err := preCommitChecker.RunPreCommit(ctx)
 		if err != nil {
 			checkSpinner.Fail("Pre-commit check failed")
 			return o.failWorkflow(state, fmt.Errorf("failed to run pre-commit: %w", err))
@@ -475,7 +494,8 @@ func (o *Orchestrator) executeImplementation(ctx context.Context, state *Workflo
 		ciSpinner := NewSpinner("Waiting for CI to complete...")
 		ciSpinner.Start()
 
-		ciResult, err := o.ciChecker.WaitForCI(ctx, 0, o.config.CICheckTimeout)
+		ciChecker := o.getCIChecker(workingDir)
+		ciResult, err := ciChecker.WaitForCI(ctx, 0, o.config.CICheckTimeout)
 		if err != nil {
 			ciSpinner.Fail("CI check failed")
 			return o.failWorkflow(state, fmt.Errorf("failed to check CI: %w", err))
@@ -551,6 +571,7 @@ func (o *Orchestrator) executeRefactoring(ctx context.Context, state *WorkflowSt
 			Timeout:                    o.config.Timeouts.Refactoring,
 			JSONSchema:                 RefactoringSummarySchema,
 			DangerouslySkipPermissions: o.config.DangerouslySkipPermissions,
+			WorkingDirectory:           state.WorktreePath,
 		}, spinner.OnProgress)
 
 		if err != nil {
@@ -592,7 +613,12 @@ func (o *Orchestrator) executeRefactoring(ctx context.Context, state *WorkflowSt
 		checkSpinner := NewSpinner("Running pre-commit checks...")
 		checkSpinner.Start()
 
-		preCommitResult, err := o.preCommitChecker.RunPreCommit(ctx)
+		workingDir := state.WorktreePath
+		if workingDir == "" {
+			workingDir = o.config.BaseDir
+		}
+		preCommitChecker := o.getPreCommitChecker(workingDir)
+		preCommitResult, err := preCommitChecker.RunPreCommit(ctx)
 		if err != nil {
 			checkSpinner.Fail("Pre-commit check failed")
 			return o.failWorkflow(state, fmt.Errorf("failed to run pre-commit: %w", err))
@@ -621,7 +647,8 @@ func (o *Orchestrator) executeRefactoring(ctx context.Context, state *WorkflowSt
 		ciSpinner := NewSpinner("Waiting for CI to complete...")
 		ciSpinner.Start()
 
-		ciResult, err := o.ciChecker.WaitForCI(ctx, 0, o.config.CICheckTimeout)
+		ciChecker := o.getCIChecker(workingDir)
+		ciResult, err := ciChecker.WaitForCI(ctx, 0, o.config.CICheckTimeout)
 		if err != nil {
 			ciSpinner.Fail("CI check failed")
 			return o.failWorkflow(state, fmt.Errorf("failed to check CI: %w", err))
@@ -654,7 +681,7 @@ func (o *Orchestrator) executeRefactoring(ctx context.Context, state *WorkflowSt
 		}
 	}
 
-	metrics, err := o.getPRMetrics(ctx)
+	metrics, err := o.getPRMetrics(ctx, state.WorktreePath)
 	if err != nil {
 		return o.failWorkflow(state, fmt.Errorf("failed to get PR metrics: %w", err))
 	}
@@ -720,6 +747,7 @@ func (o *Orchestrator) executePRSplit(ctx context.Context, state *WorkflowState)
 			Timeout:                    o.config.Timeouts.PRSplit,
 			JSONSchema:                 PRSplitResultSchema,
 			DangerouslySkipPermissions: o.config.DangerouslySkipPermissions,
+			WorkingDirectory:           state.WorktreePath,
 		}, spinner.OnProgress)
 
 		if err != nil {
@@ -758,6 +786,11 @@ func (o *Orchestrator) executePRSplit(ctx context.Context, state *WorkflowState)
 
 		spinner.Success("PR split complete")
 
+		workingDir := state.WorktreePath
+		if workingDir == "" {
+			workingDir = o.config.BaseDir
+		}
+
 		allPassed := true
 		for i, childPR := range prResult.ChildPRs {
 			isLastChild := (i == len(prResult.ChildPRs)-1)
@@ -767,7 +800,8 @@ func (o *Orchestrator) executePRSplit(ctx context.Context, state *WorkflowState)
 			checkSpinner := NewSpinner("Running pre-commit checks...")
 			checkSpinner.Start()
 
-			preCommitResult, err := o.preCommitChecker.RunPreCommit(ctx)
+			preCommitChecker := o.getPreCommitChecker(workingDir)
+			preCommitResult, err := preCommitChecker.RunPreCommit(ctx)
 			if err != nil {
 				checkSpinner.Fail("Pre-commit check failed")
 				return o.failWorkflow(state, fmt.Errorf("failed to run pre-commit on child PR #%d: %w", childPR.Number, err))
@@ -793,7 +827,8 @@ func (o *Orchestrator) executePRSplit(ctx context.Context, state *WorkflowState)
 			ciSpinner := NewSpinner("Waiting for CI to complete...")
 			ciSpinner.Start()
 
-			ciResult, err := o.ciChecker.WaitForCIWithOptions(ctx, childPR.Number, o.config.CICheckTimeout, opts)
+			ciChecker := o.getCIChecker(workingDir)
+			ciResult, err := ciChecker.WaitForCIWithOptions(ctx, childPR.Number, o.config.CICheckTimeout, opts)
 			if err != nil {
 				ciSpinner.Fail("CI check failed")
 				return o.failWorkflow(state, fmt.Errorf("failed to check CI on child PR #%d: %w", childPR.Number, err))
@@ -882,8 +917,11 @@ func (o *Orchestrator) failWorkflow(state *WorkflowState, err error) error {
 }
 
 // getPRMetrics collects PR metrics from git diff
-func (o *Orchestrator) getPRMetrics(ctx context.Context) (*PRMetrics, error) {
+func (o *Orchestrator) getPRMetrics(ctx context.Context, workingDir string) (*PRMetrics, error) {
 	cmd := exec.CommandContext(ctx, "git", "diff", "--stat", "origin/main")
+	if workingDir != "" {
+		cmd.Dir = workingDir
+	}
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("failed to run git diff: %w", err)
@@ -1023,4 +1061,20 @@ func formatCIErrors(result *CIResult) string {
 		builder.WriteString("\n")
 	}
 	return builder.String()
+}
+
+// getPreCommitChecker creates or retrieves a PreCommitChecker for the given working directory
+func (o *Orchestrator) getPreCommitChecker(workingDir string) PreCommitChecker {
+	if o.preCommitCheckerFactory != nil {
+		return o.preCommitCheckerFactory(workingDir)
+	}
+	return NewPreCommitChecker(workingDir)
+}
+
+// getCIChecker creates or retrieves a CIChecker for the given working directory
+func (o *Orchestrator) getCIChecker(workingDir string) CIChecker {
+	if o.ciCheckerFactory != nil {
+		return o.ciCheckerFactory(workingDir, o.config.CICheckInterval)
+	}
+	return NewCIChecker(workingDir, o.config.CICheckInterval)
 }

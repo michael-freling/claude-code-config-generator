@@ -239,6 +239,26 @@ func (m *MockOutputParser) ParsePRSplitResult(jsonStr string) (*PRSplitResult, e
 	return args.Get(0).(*PRSplitResult), args.Error(1)
 }
 
+// MockWorktreeManager is a mock implementation of WorktreeManager
+type MockWorktreeManager struct {
+	mock.Mock
+}
+
+func (m *MockWorktreeManager) CreateWorktree(workflowName string) (string, error) {
+	args := m.Called(workflowName)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockWorktreeManager) WorktreeExists(path string) bool {
+	args := m.Called(path)
+	return args.Bool(0)
+}
+
+func (m *MockWorktreeManager) DeleteWorktree(path string) error {
+	args := m.Called(path)
+	return args.Error(0)
+}
+
 func TestNewOrchestrator(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -486,18 +506,24 @@ func TestOrchestrator_executeConfirmation(t *testing.T) {
 
 func TestOrchestrator_executeImplementation(t *testing.T) {
 	tests := []struct {
-		name          string
-		setupMocks    func(*MockStateManager, *MockClaudeExecutor, *MockPromptGenerator, *MockOutputParser, *MockPreCommitChecker, *MockCIChecker)
-		wantErr       bool
-		wantNextPhase Phase
+		name             string
+		initialWorktree  string
+		setupMocks       func(*MockStateManager, *MockClaudeExecutor, *MockPromptGenerator, *MockOutputParser, *MockPreCommitChecker, *MockCIChecker, *MockWorktreeManager)
+		wantErr          bool
+		wantNextPhase    Phase
+		wantWorktreePath string
 	}{
 		{
-			name: "successfully implements plan with pre-commit passing",
-			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser, pc *MockPreCommitChecker, ci *MockCIChecker) {
+			name:            "successfully implements plan with pre-commit passing",
+			initialWorktree: "",
+			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser, pc *MockPreCommitChecker, ci *MockCIChecker, wm *MockWorktreeManager) {
 				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
+				wm.On("CreateWorktree", "test-workflow").Return("/tmp/worktrees/test-workflow", nil)
 				sm.On("LoadPlan", "test-workflow").Return(&Plan{Summary: "test plan"}, nil)
 				pg.On("GenerateImplementationPrompt", mock.Anything).Return("implementation prompt", nil)
-				exec.On("ExecuteStreaming", mock.Anything, mock.Anything, mock.Anything).Return(&ExecuteResult{
+				exec.On("ExecuteStreaming", mock.Anything, mock.MatchedBy(func(config ExecuteConfig) bool {
+					return config.WorkingDirectory == "/tmp/worktrees/test-workflow"
+				}), mock.Anything).Return(&ExecuteResult{
 					Output:   "```json\n{\"summary\": \"implemented\"}\n```",
 					ExitCode: 0,
 				}, nil)
@@ -507,13 +533,51 @@ func TestOrchestrator_executeImplementation(t *testing.T) {
 				pc.On("RunPreCommit", mock.Anything).Return(&PreCommitResult{Passed: true}, nil)
 				ci.On("WaitForCI", mock.Anything, 0, mock.Anything).Return(&CIResult{Passed: true, Status: "success"}, nil)
 			},
-			wantErr:       false,
-			wantNextPhase: PhaseRefactoring,
+			wantErr:          false,
+			wantNextPhase:    PhaseRefactoring,
+			wantWorktreePath: "/tmp/worktrees/test-workflow",
 		},
 		{
-			name: "retries when pre-commit fails then succeeds",
-			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser, pc *MockPreCommitChecker, ci *MockCIChecker) {
+			name:            "skips worktree creation when WorktreePath already set (resume scenario)",
+			initialWorktree: "/existing/worktree/path",
+			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser, pc *MockPreCommitChecker, ci *MockCIChecker, wm *MockWorktreeManager) {
 				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
+				// Note: CreateWorktree should NOT be called
+				sm.On("LoadPlan", "test-workflow").Return(&Plan{Summary: "test plan"}, nil)
+				pg.On("GenerateImplementationPrompt", mock.Anything).Return("implementation prompt", nil)
+				exec.On("ExecuteStreaming", mock.Anything, mock.MatchedBy(func(config ExecuteConfig) bool {
+					return config.WorkingDirectory == "/existing/worktree/path"
+				}), mock.Anything).Return(&ExecuteResult{
+					Output:   "```json\n{\"summary\": \"implemented\"}\n```",
+					ExitCode: 0,
+				}, nil)
+				op.On("ExtractJSON", mock.Anything).Return("{\"summary\": \"implemented\"}", nil)
+				op.On("ParseImplementationSummary", mock.Anything).Return(&ImplementationSummary{Summary: "implemented"}, nil)
+				sm.On("SavePhaseOutput", "test-workflow", PhaseImplementation, mock.Anything).Return(nil)
+				pc.On("RunPreCommit", mock.Anything).Return(&PreCommitResult{Passed: true}, nil)
+				ci.On("WaitForCI", mock.Anything, 0, mock.Anything).Return(&CIResult{Passed: true, Status: "success"}, nil)
+			},
+			wantErr:          false,
+			wantNextPhase:    PhaseRefactoring,
+			wantWorktreePath: "/existing/worktree/path",
+		},
+		{
+			name:            "fails when worktree creation fails",
+			initialWorktree: "",
+			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser, pc *MockPreCommitChecker, ci *MockCIChecker, wm *MockWorktreeManager) {
+				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
+				wm.On("CreateWorktree", "test-workflow").Return("", errors.New("branch already exists"))
+			},
+			wantErr:          true,
+			wantNextPhase:    PhaseFailed,
+			wantWorktreePath: "",
+		},
+		{
+			name:            "retries when pre-commit fails then succeeds",
+			initialWorktree: "",
+			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser, pc *MockPreCommitChecker, ci *MockCIChecker, wm *MockWorktreeManager) {
+				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
+				wm.On("CreateWorktree", "test-workflow").Return("/tmp/worktrees/test-workflow", nil)
 				sm.On("LoadPlan", "test-workflow").Return(&Plan{Summary: "test plan"}, nil)
 
 				pg.On("GenerateImplementationPrompt", mock.Anything).Return("implementation prompt", nil).Once()
@@ -536,8 +600,9 @@ func TestOrchestrator_executeImplementation(t *testing.T) {
 				pc.On("RunPreCommit", mock.Anything).Return(&PreCommitResult{Passed: true}, nil).Once()
 				ci.On("WaitForCI", mock.Anything, 0, mock.Anything).Return(&CIResult{Passed: true, Status: "success"}, nil)
 			},
-			wantErr:       false,
-			wantNextPhase: PhaseRefactoring,
+			wantErr:          false,
+			wantNextPhase:    PhaseRefactoring,
+			wantWorktreePath: "/tmp/worktrees/test-workflow",
 		},
 	}
 
@@ -549,22 +614,29 @@ func TestOrchestrator_executeImplementation(t *testing.T) {
 			mockOP := new(MockOutputParser)
 			mockPC := new(MockPreCommitChecker)
 			mockCI := new(MockCIChecker)
+			mockWM := new(MockWorktreeManager)
 
-			tt.setupMocks(mockSM, mockExec, mockPG, mockOP, mockPC, mockCI)
+			tt.setupMocks(mockSM, mockExec, mockPG, mockOP, mockPC, mockCI, mockWM)
 
 			o := &Orchestrator{
-				stateManager:     mockSM,
-				executor:         mockExec,
-				promptGenerator:  mockPG,
-				parser:           mockOP,
-				config:           DefaultConfig("/tmp/workflows"),
-				preCommitChecker: mockPC,
-				ciChecker:        mockCI,
+				stateManager:    mockSM,
+				executor:        mockExec,
+				promptGenerator: mockPG,
+				parser:          mockOP,
+				config:          DefaultConfig("/tmp/workflows"),
+				worktreeManager: mockWM,
+				preCommitCheckerFactory: func(workingDir string) PreCommitChecker {
+					return mockPC
+				},
+				ciCheckerFactory: func(workingDir string, checkInterval time.Duration) CIChecker {
+					return mockCI
+				},
 			}
 
 			state := &WorkflowState{
 				Name:         "test-workflow",
 				CurrentPhase: PhaseImplementation,
+				WorktreePath: tt.initialWorktree,
 				Phases: map[Phase]*PhaseState{
 					PhasePlanning:       {Status: StatusCompleted},
 					PhaseConfirmation:   {Status: StatusCompleted},
@@ -583,11 +655,13 @@ func TestOrchestrator_executeImplementation(t *testing.T) {
 			}
 
 			assert.Equal(t, tt.wantNextPhase, state.CurrentPhase)
+			assert.Equal(t, tt.wantWorktreePath, state.WorktreePath)
 			mockSM.AssertExpectations(t)
 			mockExec.AssertExpectations(t)
 			mockPG.AssertExpectations(t)
 			mockOP.AssertExpectations(t)
 			mockPC.AssertExpectations(t)
+			mockWM.AssertExpectations(t)
 		})
 	}
 }
