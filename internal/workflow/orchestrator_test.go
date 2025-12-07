@@ -1053,29 +1053,84 @@ func TestIsRecoverableError(t *testing.T) {
 		want bool
 	}{
 		{
-			name: "timeout is recoverable",
+			name: "nil error is not recoverable",
+			err:  nil,
+			want: false,
+		},
+		{
+			name: "timeout error is recoverable",
 			err:  errors.New("operation timeout"),
 			want: true,
 		},
 		{
-			name: "execution failure is recoverable",
+			name: "connection timeout is recoverable",
+			err:  errors.New("connection timeout after 30s"),
+			want: true,
+		},
+		{
+			name: "claude execution timeout is recoverable",
+			err:  errors.New("claude execution timeout"),
+			want: true,
+		},
+		{
+			name: "claude execution failed is recoverable",
 			err:  errors.New("claude execution failed"),
 			want: true,
 		},
 		{
-			name: "parse error is recoverable",
+			name: "claude execution failed with exit code is recoverable",
+			err:  errors.New("claude execution failed with exit code 1"),
+			want: true,
+		},
+		{
+			name: "failed to parse JSON is recoverable",
 			err:  errors.New("failed to parse JSON"),
 			want: true,
 		},
 		{
-			name: "invalid input is not recoverable",
+			name: "failed to parse YAML is recoverable",
+			err:  errors.New("failed to parse YAML"),
+			want: true,
+		},
+		{
+			name: "failed to parse response is recoverable",
+			err:  errors.New("failed to parse response"),
+			want: true,
+		},
+		{
+			name: "invalid workflow name is not recoverable",
 			err:  errors.New("invalid workflow name"),
 			want: false,
 		},
 		{
-			name: "nil error is not recoverable",
-			err:  nil,
+			name: "invalid phase is not recoverable",
+			err:  errors.New("invalid phase transition"),
 			want: false,
+		},
+		{
+			name: "invalid configuration is not recoverable",
+			err:  errors.New("invalid configuration"),
+			want: false,
+		},
+		{
+			name: "invalid input is not recoverable",
+			err:  errors.New("invalid input parameter"),
+			want: false,
+		},
+		{
+			name: "generic error is recoverable by default",
+			err:  errors.New("something went wrong"),
+			want: true,
+		},
+		{
+			name: "network error is recoverable by default",
+			err:  errors.New("network connection lost"),
+			want: true,
+		},
+		{
+			name: "temporary error is recoverable by default",
+			err:  errors.New("temporary failure, please retry"),
+			want: true,
 		},
 	}
 
@@ -1119,10 +1174,144 @@ func TestParseDiffStat(t *testing.T) {
 		wantErr    bool
 	}{
 		{
-			name: "parses diff stat with modifications",
+			name: "single file changed",
+			diffOutput: ` main.go | 10 ++++++++++
+ 1 file changed, 10 insertions(+)`,
+			want: &PRMetrics{
+				LinesChanged:  10,
+				FilesChanged:  1,
+				FilesAdded:    []string{},
+				FilesModified: []string{"main.go"},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "multiple files changed",
 			diffOutput: ` file1.go | 10 ++++++++++
  file2.go | 5 +++++
- 2 files changed, 15 insertions(+)`,
+ file3.go | 3 +++
+ 3 files changed, 18 insertions(+)`,
+			want: &PRMetrics{
+				LinesChanged:  18,
+				FilesChanged:  3,
+				FilesAdded:    []string{},
+				FilesModified: []string{"file1.go", "file2.go", "file3.go"},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+		{
+			name:       "no changes",
+			diffOutput: "",
+			want: &PRMetrics{
+				FilesAdded:    []string{},
+				FilesModified: []string{},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "new file added",
+			diffOutput: ` newfile.go (new) | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)`,
+			want: &PRMetrics{
+				LinesChanged:  20,
+				FilesChanged:  1,
+				FilesAdded:    []string{"newfile.go"},
+				FilesModified: []string{},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "file deleted",
+			diffOutput: ` oldfile.go (gone) | 50 --------------------------------------------------
+ 1 file changed, 50 deletions(-)`,
+			want: &PRMetrics{
+				LinesChanged:  50,
+				FilesChanged:  1,
+				FilesAdded:    []string{},
+				FilesModified: []string{},
+				FilesDeleted:  []string{"oldfile.go"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "mixed changes with additions modifications and deletions",
+			diffOutput: ` newfile.go (new) | 20 ++++++++++++++++++++
+ existing.go | 10 ++++++++++
+ oldfile.go (gone) | 15 ---------------
+ 3 files changed, 30 insertions(+), 15 deletions(-)`,
+			want: &PRMetrics{
+				LinesChanged:  30,
+				FilesChanged:  3,
+				FilesAdded:    []string{"newfile.go"},
+				FilesModified: []string{"existing.go"},
+				FilesDeleted:  []string{"oldfile.go"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "files with paths",
+			diffOutput: ` internal/workflow/orchestrator.go | 25 +++++++++++++++++++
+ cmd/main.go | 5 +++++
+ 2 files changed, 30 insertions(+)`,
+			want: &PRMetrics{
+				LinesChanged:  30,
+				FilesChanged:  2,
+				FilesAdded:    []string{},
+				FilesModified: []string{"internal/workflow/orchestrator.go", "cmd/main.go"},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "binary files",
+			diffOutput: ` image.png | Bin 0 -> 1024 bytes
+ data.bin  | Bin 2048 -> 4096 bytes
+ 2 files changed`,
+			want: &PRMetrics{
+				LinesChanged:  0,
+				FilesChanged:  2,
+				FilesAdded:    []string{},
+				FilesModified: []string{"image.png", "data.bin"},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "renamed files",
+			diffOutput: ` old.go => new.go | 5 +++++
+ 1 file changed, 5 insertions(+)`,
+			want: &PRMetrics{
+				LinesChanged:  5,
+				FilesChanged:  1,
+				FilesAdded:    []string{},
+				FilesModified: []string{"old.go"},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "large number of changes",
+			diffOutput: ` file1.go | 100 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ file2.go | 50 +++++++++++++++++++++++++++++
+ 2 files changed, 150 insertions(+)`,
+			want: &PRMetrics{
+				LinesChanged:  150,
+				FilesChanged:  2,
+				FilesAdded:    []string{},
+				FilesModified: []string{"file1.go", "file2.go"},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "deletions only",
+			diffOutput: ` file1.go | 10 ----------
+ file2.go | 5 -----
+ 2 files changed, 15 deletions(-)`,
 			want: &PRMetrics{
 				LinesChanged:  15,
 				FilesChanged:  2,
@@ -1133,24 +1322,14 @@ func TestParseDiffStat(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:       "handles empty diff",
-			diffOutput: "",
+			name: "insertions and deletions combined",
+			diffOutput: ` file1.go | 25 +++++++++++--------------
+ 1 file changed, 12 insertions(+), 13 deletions(-)`,
 			want: &PRMetrics{
-				FilesAdded:    []string{},
-				FilesModified: []string{},
-				FilesDeleted:  []string{},
-			},
-			wantErr: false,
-		},
-		{
-			name: "parses diff stat with new files",
-			diffOutput: ` newfile.go (new) | 20 ++++++++++++++++++++
- 1 file changed, 20 insertions(+)`,
-			want: &PRMetrics{
-				LinesChanged:  20,
+				LinesChanged:  12,
 				FilesChanged:  1,
-				FilesAdded:    []string{"newfile.go"},
-				FilesModified: []string{},
+				FilesAdded:    []string{},
+				FilesModified: []string{"file1.go"},
 				FilesDeleted:  []string{},
 			},
 			wantErr: false,
@@ -1620,10 +1799,10 @@ func TestDefaultConfirmFunc(t *testing.T) {
 
 func TestGetCIChecker(t *testing.T) {
 	tests := []struct {
-		name              string
-		ciCheckerFactory  func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker
-		workingDir        string
-		wantFactoryCalled bool
+		name             string
+		ciCheckerFactory func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker
+		workingDir       string
+		wantMock         bool
 	}{
 		{
 			name: "uses factory when set",
@@ -1631,20 +1810,57 @@ func TestGetCIChecker(t *testing.T) {
 				mockCI := new(MockCIChecker)
 				return mockCI
 			},
-			workingDir:        "/tmp/worktree",
-			wantFactoryCalled: true,
+			workingDir: "/tmp/worktree",
+			wantMock:   true,
 		},
 		{
-			name:              "creates real checker when factory is nil",
-			ciCheckerFactory:  nil,
-			workingDir:        "/tmp/worktree",
-			wantFactoryCalled: false,
+			name:             "creates real checker when factory is nil",
+			ciCheckerFactory: nil,
+			workingDir:       "/tmp/worktree",
+			wantMock:         false,
+		},
+		{
+			name: "passes correct working directory to factory",
+			ciCheckerFactory: func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker {
+				assert.Equal(t, "/custom/worktree/path", workingDir)
+				mockCI := new(MockCIChecker)
+				return mockCI
+			},
+			workingDir: "/custom/worktree/path",
+			wantMock:   true,
+		},
+		{
+			name: "passes config check interval to factory",
+			ciCheckerFactory: func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker {
+				assert.Equal(t, 45*time.Second, checkInterval)
+				mockCI := new(MockCIChecker)
+				return mockCI
+			},
+			workingDir: "/tmp/worktree",
+			wantMock:   true,
+		},
+		{
+			name: "passes config command timeout to factory",
+			ciCheckerFactory: func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker {
+				assert.Equal(t, 3*time.Minute, commandTimeout)
+				mockCI := new(MockCIChecker)
+				return mockCI
+			},
+			workingDir: "/tmp/worktree",
+			wantMock:   true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := DefaultConfig("/tmp/workflows")
+			if tt.name == "passes config check interval to factory" {
+				config.CICheckInterval = 45 * time.Second
+			}
+			if tt.name == "passes config command timeout to factory" {
+				config.GHCommandTimeout = 3 * time.Minute
+			}
+
 			o := &Orchestrator{
 				config:           config,
 				ciCheckerFactory: tt.ciCheckerFactory,
@@ -1653,6 +1869,10 @@ func TestGetCIChecker(t *testing.T) {
 			checker := o.getCIChecker(tt.workingDir)
 
 			assert.NotNil(t, checker)
+			if tt.wantMock {
+				_, ok := checker.(*MockCIChecker)
+				assert.True(t, ok, "expected MockCIChecker")
+			}
 		})
 	}
 }
@@ -1703,174 +1923,41 @@ func TestFormatCIErrors(t *testing.T) {
 			},
 			want: "CI checks failed with the following errors:\n\nUnknown error\n\nFailed jobs:\n",
 		},
+		{
+			name: "formats output with multiline errors",
+			result: &CIResult{
+				Passed:     false,
+				Status:     "failure",
+				Output:     "Error 1: Build failed\nError 2: Test failed\nError 3: Lint failed",
+				FailedJobs: []string{"ci"},
+			},
+			want: "CI checks failed with the following errors:\n\nError 1: Build failed\nError 2: Test failed\nError 3: Lint failed\n\nFailed jobs:\n- ci\n",
+		},
+		{
+			name: "formats with special characters in output",
+			result: &CIResult{
+				Passed:     false,
+				Status:     "failure",
+				Output:     "Error: file \"test.go\" has issues\n\tLine 42: syntax error",
+				FailedJobs: []string{"build"},
+			},
+			want: "CI checks failed with the following errors:\n\nError: file \"test.go\" has issues\n\tLine 42: syntax error\n\nFailed jobs:\n- build\n",
+		},
+		{
+			name: "formats with nil failed jobs slice",
+			result: &CIResult{
+				Passed:     false,
+				Status:     "failure",
+				Output:     "CI system error",
+				FailedJobs: nil,
+			},
+			want: "CI checks failed with the following errors:\n\nCI system error\n\nFailed jobs:\n",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := formatCIErrors(tt.result)
-			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
-func TestParseDiffStat_AdditionalCases(t *testing.T) {
-	tests := []struct {
-		name       string
-		diffOutput string
-		want       *PRMetrics
-		wantErr    bool
-	}{
-		{
-			name: "parses diff stat with deletions only",
-			diffOutput: ` file1.go | 10 ----------
- file2.go | 5 -----
- 2 files changed, 15 deletions(-)`,
-			want: &PRMetrics{
-				LinesChanged:  15,
-				FilesChanged:  2,
-				FilesAdded:    []string{},
-				FilesModified: []string{"file1.go", "file2.go"},
-				FilesDeleted:  []string{},
-			},
-			wantErr: false,
-		},
-		{
-			name: "parses diff stat with file deletions",
-			diffOutput: ` oldfile.go (gone) | 50 --------------------------------------------------
- 1 file changed, 50 deletions(-)`,
-			want: &PRMetrics{
-				LinesChanged:  50,
-				FilesChanged:  1,
-				FilesAdded:    []string{},
-				FilesModified: []string{},
-				FilesDeleted:  []string{"oldfile.go"},
-			},
-			wantErr: false,
-		},
-		{
-			name: "parses diff stat with mixed changes",
-			diffOutput: ` newfile.go (new) | 20 ++++++++++++++++++++
- existing.go | 10 ++++++++++
- oldfile.go (gone) | 15 ---------------
- 3 files changed, 30 insertions(+), 15 deletions(-)`,
-			want: &PRMetrics{
-				LinesChanged:  30,
-				FilesChanged:  3,
-				FilesAdded:    []string{"newfile.go"},
-				FilesModified: []string{"existing.go"},
-				FilesDeleted:  []string{"oldfile.go"},
-			},
-			wantErr: false,
-		},
-		{
-			name: "parses diff stat with binary files",
-			diffOutput: ` image.png | Bin 0 -> 1024 bytes
- data.bin  | Bin 2048 -> 4096 bytes
- 2 files changed`,
-			want: &PRMetrics{
-				LinesChanged:  0,
-				FilesChanged:  2,
-				FilesAdded:    []string{},
-				FilesModified: []string{"image.png", "data.bin"},
-				FilesDeleted:  []string{},
-			},
-			wantErr: false,
-		},
-		{
-			name: "handles renamed files",
-			diffOutput: ` old.go => new.go | 5 +++++
- 1 file changed, 5 insertions(+)`,
-			want: &PRMetrics{
-				LinesChanged:  5,
-				FilesChanged:  1,
-				FilesAdded:    []string{},
-				FilesModified: []string{"old.go"},
-				FilesDeleted:  []string{},
-			},
-			wantErr: false,
-		},
-		{
-			name: "parses diff stat with insertions and deletions",
-			diffOutput: ` file1.go | 100 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
- file2.go | 50 +++++++++++++++++++++++++++++
- 2 files changed, 150 insertions(+), 0 deletions(-)`,
-			want: &PRMetrics{
-				LinesChanged:  150,
-				FilesChanged:  2,
-				FilesAdded:    []string{},
-				FilesModified: []string{"file1.go", "file2.go"},
-				FilesDeleted:  []string{},
-			},
-			wantErr: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseDiffStat(tt.diffOutput)
-
-			if tt.wantErr {
-				require.Error(t, err)
-				return
-			}
-
-			require.NoError(t, err)
-			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
-func TestIsRecoverableError_AdditionalCases(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want bool
-	}{
-		{
-			name: "network timeout is recoverable",
-			err:  errors.New("connection timeout after 30s"),
-			want: true,
-		},
-		{
-			name: "claude timeout is recoverable",
-			err:  errors.New("claude execution timeout"),
-			want: true,
-		},
-		{
-			name: "json parse error is recoverable",
-			err:  errors.New("failed to parse JSON response"),
-			want: true,
-		},
-		{
-			name: "yaml parse error is recoverable",
-			err:  errors.New("failed to parse YAML"),
-			want: true,
-		},
-		{
-			name: "invalid phase is not recoverable",
-			err:  errors.New("invalid phase transition"),
-			want: false,
-		},
-		{
-			name: "invalid config is not recoverable",
-			err:  errors.New("invalid configuration"),
-			want: false,
-		},
-		{
-			name: "generic claude failure is recoverable",
-			err:  errors.New("claude execution failed with exit code 1"),
-			want: true,
-		},
-		{
-			name: "unknown error is recoverable by default",
-			err:  errors.New("something went wrong"),
-			want: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := isRecoverableError(tt.err)
 			assert.Equal(t, tt.want, got)
 		})
 	}

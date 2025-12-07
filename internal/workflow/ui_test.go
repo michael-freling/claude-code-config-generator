@@ -352,12 +352,28 @@ func TestStreamingSpinner_Lifecycle(t *testing.T) {
 
 func TestStreamingSpinner_Success(t *testing.T) {
 	tests := []struct {
-		name    string
-		message string
+		name          string
+		message       string
+		toolCallCount int
+		wantToolCount int
 	}{
 		{
-			name:    "Success stops spinner and prints message with stats",
-			message: "Operation completed successfully",
+			name:          "Success stops spinner and prints message with stats",
+			message:       "Operation completed successfully",
+			toolCallCount: 1,
+			wantToolCount: 1,
+		},
+		{
+			name:          "Success with no tool calls",
+			message:       "Operation completed",
+			toolCallCount: 0,
+			wantToolCount: 0,
+		},
+		{
+			name:          "Success with multiple tool calls",
+			message:       "Operation completed",
+			toolCallCount: 5,
+			wantToolCount: 5,
 		},
 	}
 
@@ -368,10 +384,14 @@ func TestStreamingSpinner_Success(t *testing.T) {
 			spinner.Start()
 			time.Sleep(10 * time.Millisecond)
 
-			spinner.OnProgress(ProgressEvent{
-				Type:     "tool_use",
-				ToolName: "Read",
-			})
+			for i := 0; i < tt.toolCallCount; i++ {
+				spinner.OnProgress(ProgressEvent{
+					Type:     "tool_use",
+					ToolName: "Read",
+				})
+			}
+
+			assert.Equal(t, tt.wantToolCount, spinner.toolCount)
 
 			spinner.Success(tt.message)
 			time.Sleep(10 * time.Millisecond)
@@ -574,6 +594,30 @@ func TestTruncateForDisplay(t *testing.T) {
 			input:  "123456789012345678901",
 			maxLen: 20,
 			want:   "12345678901234567...",
+		},
+		{
+			name:   "very small maxLen",
+			input:  "hello world",
+			maxLen: 5,
+			want:   "he...",
+		},
+		{
+			name:   "maxLen of 4 truncates to single char plus ellipsis",
+			input:  "hello",
+			maxLen: 4,
+			want:   "h...",
+		},
+		{
+			name:   "maxLen of 3 produces only ellipsis",
+			input:  "hello",
+			maxLen: 3,
+			want:   "...",
+		},
+		{
+			name:   "newlines and spaces with truncation",
+			input:  "line1\nline2\nline3 with very long content that needs truncation",
+			maxLen: 30,
+			want:   "line1 line2 line3 with very...",
 		},
 	}
 
@@ -794,6 +838,325 @@ func TestFormatWorkflowStatus(t *testing.T) {
 			for _, want := range tt.wantContains {
 				assert.Contains(t, got, want)
 			}
+		})
+	}
+}
+
+func TestGetPhaseNumber(t *testing.T) {
+	tests := []struct {
+		name  string
+		phase Phase
+		want  int
+	}{
+		{
+			name:  "PhasePlanning returns 1",
+			phase: PhasePlanning,
+			want:  1,
+		},
+		{
+			name:  "PhaseConfirmation returns 2",
+			phase: PhaseConfirmation,
+			want:  2,
+		},
+		{
+			name:  "PhaseImplementation returns 3",
+			phase: PhaseImplementation,
+			want:  3,
+		},
+		{
+			name:  "PhaseRefactoring returns 4",
+			phase: PhaseRefactoring,
+			want:  4,
+		},
+		{
+			name:  "PhasePRSplit returns 5",
+			phase: PhasePRSplit,
+			want:  5,
+		},
+		{
+			name:  "PhaseCompleted returns 0",
+			phase: PhaseCompleted,
+			want:  0,
+		},
+		{
+			name:  "PhaseFailed returns 0",
+			phase: PhaseFailed,
+			want:  0,
+		},
+		{
+			name:  "Unknown phase returns 0",
+			phase: Phase("UNKNOWN"),
+			want:  0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := getPhaseNumber(tt.phase)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestGetPhaseName(t *testing.T) {
+	tests := []struct {
+		name  string
+		phase Phase
+		want  string
+	}{
+		{
+			name:  "PhasePlanning returns Planning",
+			phase: PhasePlanning,
+			want:  "Planning",
+		},
+		{
+			name:  "PhaseConfirmation returns Confirmation",
+			phase: PhaseConfirmation,
+			want:  "Confirmation",
+		},
+		{
+			name:  "PhaseImplementation returns Implementation",
+			phase: PhaseImplementation,
+			want:  "Implementation",
+		},
+		{
+			name:  "PhaseRefactoring returns Refactoring",
+			phase: PhaseRefactoring,
+			want:  "Refactoring",
+		},
+		{
+			name:  "PhasePRSplit returns PR Split",
+			phase: PhasePRSplit,
+			want:  "PR Split",
+		},
+		{
+			name:  "PhaseCompleted returns Completed",
+			phase: PhaseCompleted,
+			want:  "Completed",
+		},
+		{
+			name:  "PhaseFailed returns Failed",
+			phase: PhaseFailed,
+			want:  "Failed",
+		},
+		{
+			name:  "Unknown phase returns the phase string",
+			phase: Phase("CUSTOM"),
+			want:  "CUSTOM",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := getPhaseName(tt.phase)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestFormatSectionHeader(t *testing.T) {
+	tests := []struct {
+		name         string
+		title        string
+		wantContains []string
+		wantPrefix   bool
+	}{
+		{
+			name:  "creates header with underline",
+			title: "Summary",
+			wantContains: []string{
+				"Summary",
+				"───",
+			},
+			wantPrefix: true,
+		},
+		{
+			name:  "longer title has longer underline",
+			title: "Architecture Overview",
+			wantContains: []string{
+				"Architecture Overview",
+				"─────────────────────",
+			},
+			wantPrefix: true,
+		},
+		{
+			name:  "empty title",
+			title: "",
+			wantContains: []string{
+				"────",
+			},
+			wantPrefix: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatSectionHeader(tt.title)
+			for _, want := range tt.wantContains {
+				assert.Contains(t, got, want)
+			}
+			assert.True(t, strings.Contains(got, "\n"))
+		})
+	}
+}
+
+func TestIndentText(t *testing.T) {
+	tests := []struct {
+		name   string
+		text   string
+		spaces int
+		want   string
+	}{
+		{
+			name:   "single line indented by 2 spaces",
+			text:   "hello",
+			spaces: 2,
+			want:   "  hello",
+		},
+		{
+			name:   "multiple lines indented by 2 spaces",
+			text:   "line1\nline2\nline3",
+			spaces: 2,
+			want:   "  line1\n  line2\n  line3",
+		},
+		{
+			name:   "indented by 4 spaces",
+			text:   "hello\nworld",
+			spaces: 4,
+			want:   "    hello\n    world",
+		},
+		{
+			name:   "empty lines not indented",
+			text:   "line1\n\nline3",
+			spaces: 2,
+			want:   "  line1\n\n  line3",
+		},
+		{
+			name:   "zero spaces no indentation",
+			text:   "hello",
+			spaces: 0,
+			want:   "hello",
+		},
+		{
+			name:   "text with trailing newline",
+			text:   "hello\n",
+			spaces: 2,
+			want:   "  hello\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := indentText(tt.text, tt.spaces)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestStreamingSpinner_OnProgress_ToolCount(t *testing.T) {
+	tests := []struct {
+		name          string
+		events        []ProgressEvent
+		wantToolCount int
+	}{
+		{
+			name: "single tool_use event increments count",
+			events: []ProgressEvent{
+				{Type: "tool_use", ToolName: "Read"},
+			},
+			wantToolCount: 1,
+		},
+		{
+			name: "multiple tool_use events increment count",
+			events: []ProgressEvent{
+				{Type: "tool_use", ToolName: "Read"},
+				{Type: "tool_use", ToolName: "Bash"},
+				{Type: "tool_use", ToolName: "Edit"},
+			},
+			wantToolCount: 3,
+		},
+		{
+			name: "tool_result events do not increment count",
+			events: []ProgressEvent{
+				{Type: "tool_result", Text: "Success"},
+				{Type: "tool_result", Text: "Done"},
+			},
+			wantToolCount: 0,
+		},
+		{
+			name: "mixed events only count tool_use",
+			events: []ProgressEvent{
+				{Type: "tool_use", ToolName: "Read"},
+				{Type: "tool_result", Text: "Success"},
+				{Type: "text", Text: "Processing"},
+				{Type: "tool_use", ToolName: "Bash"},
+			},
+			wantToolCount: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spinner := NewStreamingSpinner("Testing")
+			spinner.Start()
+			time.Sleep(10 * time.Millisecond)
+
+			for _, event := range tt.events {
+				spinner.OnProgress(event)
+			}
+
+			assert.Equal(t, tt.wantToolCount, spinner.toolCount)
+
+			spinner.Stop()
+			time.Sleep(10 * time.Millisecond)
+		})
+	}
+}
+
+func TestStreamingSpinner_OnProgress_LongToolInput(t *testing.T) {
+	tests := []struct {
+		name          string
+		event         ProgressEvent
+		wantLastTool  string
+		containsEllip bool
+	}{
+		{
+			name: "long tool input is truncated for display",
+			event: ProgressEvent{
+				Type:      "tool_use",
+				ToolName:  "Read",
+				ToolInput: "/this/is/a/very/long/path/that/should/be/truncated/for/display/purposes/file.go",
+			},
+			wantLastTool:  "Read:",
+			containsEllip: true,
+		},
+		{
+			name: "short tool input is not truncated",
+			event: ProgressEvent{
+				Type:      "tool_use",
+				ToolName:  "Bash",
+				ToolInput: "ls -la",
+			},
+			wantLastTool:  "Bash: ls -la",
+			containsEllip: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spinner := NewStreamingSpinner("Testing")
+			spinner.Start()
+			time.Sleep(10 * time.Millisecond)
+
+			spinner.OnProgress(tt.event)
+
+			assert.Contains(t, spinner.lastTool, tt.wantLastTool)
+			if tt.containsEllip {
+				assert.Contains(t, spinner.lastTool, "...")
+			}
+
+			spinner.Stop()
+			time.Sleep(10 * time.Millisecond)
 		})
 	}
 }
