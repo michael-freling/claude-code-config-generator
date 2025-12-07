@@ -1077,6 +1077,21 @@ func TestIsRecoverableError(t *testing.T) {
 			err:  nil,
 			want: false,
 		},
+		{
+			name: "invalid phase error is not recoverable",
+			err:  errors.New("invalid phase"),
+			want: false,
+		},
+		{
+			name: "general error without keywords is recoverable",
+			err:  errors.New("something went wrong"),
+			want: true,
+		},
+		{
+			name: "failed to execute is recoverable",
+			err:  errors.New("failed to execute command"),
+			want: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1151,6 +1166,71 @@ func TestParseDiffStat(t *testing.T) {
 				FilesChanged:  1,
 				FilesAdded:    []string{"newfile.go"},
 				FilesModified: []string{},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "parses diff stat with deleted files",
+			diffOutput: ` oldfile.go (gone) | 15 ---------------
+ 1 file changed, 15 deletions(-)`,
+			want: &PRMetrics{
+				LinesChanged:  15,
+				FilesChanged:  1,
+				FilesAdded:    []string{},
+				FilesModified: []string{},
+				FilesDeleted:  []string{"oldfile.go"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "parses diff stat with mixed added, modified, and deleted files",
+			diffOutput: ` newfile.go (new) | 25 +++++++++++++++++++++++++
+ modified.go | 10 +++++-----
+ deleted.go (gone) | 30 ------------------------------
+ 3 files changed, 35 insertions(+), 35 deletions(-)`,
+			want: &PRMetrics{
+				LinesChanged:  35,
+				FilesChanged:  3,
+				FilesAdded:    []string{"newfile.go"},
+				FilesModified: []string{"modified.go"},
+				FilesDeleted:  []string{"deleted.go"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "parses summary line with insertions and deletions",
+			diffOutput: ` file1.go | 50 ++++++++++++++++++++++++++++++++++++++++++++++++++
+ file2.go | 20 --------------------
+ 3 files changed, 50 insertions(+), 20 deletions(-)`,
+			want: &PRMetrics{
+				LinesChanged:  50,
+				FilesChanged:  3,
+				FilesAdded:    []string{},
+				FilesModified: []string{"file1.go", "file2.go"},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+		{
+			name:       "handles only whitespace",
+			diffOutput: "   \n  \n",
+			want: &PRMetrics{
+				FilesAdded:    []string{},
+				FilesModified: []string{},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "parses single file change",
+			diffOutput: ` README.md | 1 +
+ 1 file changed, 1 insertion(+)`,
+			want: &PRMetrics{
+				LinesChanged:  1,
+				FilesChanged:  1,
+				FilesAdded:    []string{},
+				FilesModified: []string{"README.md"},
 				FilesDeleted:  []string{},
 			},
 			wantErr: false,
@@ -1614,6 +1694,114 @@ func TestDefaultConfirmFunc(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantApproved, approved)
 			assert.Equal(t, tt.wantFeedback, feedback)
+		})
+	}
+}
+
+func TestGetCIChecker(t *testing.T) {
+	tests := []struct {
+		name             string
+		ciCheckerFactory func(workingDir string, checkInterval time.Duration) CIChecker
+		workingDir       string
+		wantFactoryCalls int
+	}{
+		{
+			name: "uses ciCheckerFactory when set",
+			ciCheckerFactory: func(workingDir string, checkInterval time.Duration) CIChecker {
+				return new(MockCIChecker)
+			},
+			workingDir:       "/tmp/test",
+			wantFactoryCalls: 1,
+		},
+		{
+			name:             "creates new CIChecker when factory is nil",
+			ciCheckerFactory: nil,
+			workingDir:       "/tmp/test",
+			wantFactoryCalls: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			factoryCalls := 0
+			o := &Orchestrator{
+				config: DefaultConfig("/tmp/workflows"),
+			}
+
+			if tt.ciCheckerFactory != nil {
+				o.ciCheckerFactory = func(workingDir string, checkInterval time.Duration) CIChecker {
+					factoryCalls++
+					assert.Equal(t, tt.workingDir, workingDir)
+					assert.Equal(t, o.config.CICheckInterval, checkInterval)
+					return tt.ciCheckerFactory(workingDir, checkInterval)
+				}
+			}
+
+			checker := o.getCIChecker(tt.workingDir)
+
+			assert.NotNil(t, checker)
+			assert.Equal(t, tt.wantFactoryCalls, factoryCalls)
+
+			if tt.ciCheckerFactory != nil {
+				_, ok := checker.(*MockCIChecker)
+				assert.True(t, ok, "expected MockCIChecker when factory is set")
+			}
+		})
+	}
+}
+
+func TestFormatCIErrors(t *testing.T) {
+	tests := []struct {
+		name   string
+		result *CIResult
+		want   string
+	}{
+		{
+			name: "with single failed job",
+			result: &CIResult{
+				Passed:     false,
+				Status:     "failure",
+				Output:     "Build failed: syntax error",
+				FailedJobs: []string{"build"},
+			},
+			want: "CI checks failed with the following errors:\n\nBuild failed: syntax error\n\nFailed jobs:\n- build\n",
+		},
+		{
+			name: "with multiple failed jobs",
+			result: &CIResult{
+				Passed:     false,
+				Status:     "failure",
+				Output:     "Multiple failures detected",
+				FailedJobs: []string{"build", "test", "lint"},
+			},
+			want: "CI checks failed with the following errors:\n\nMultiple failures detected\n\nFailed jobs:\n- build\n- test\n- lint\n",
+		},
+		{
+			name: "with empty output",
+			result: &CIResult{
+				Passed:     false,
+				Status:     "failure",
+				Output:     "",
+				FailedJobs: []string{"e2e"},
+			},
+			want: "CI checks failed with the following errors:\n\n\n\nFailed jobs:\n- e2e\n",
+		},
+		{
+			name: "with multiline output",
+			result: &CIResult{
+				Passed:     false,
+				Status:     "failure",
+				Output:     "Error on line 1\nError on line 2\nError on line 3",
+				FailedJobs: []string{"integration"},
+			},
+			want: "CI checks failed with the following errors:\n\nError on line 1\nError on line 2\nError on line 3\n\nFailed jobs:\n- integration\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatCIErrors(tt.result)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }

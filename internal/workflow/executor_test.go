@@ -381,3 +381,139 @@ func TestMockExecutor_Execute_ExitCode(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractToolInputSummary(t *testing.T) {
+	tests := []struct {
+		name     string
+		toolName string
+		input    []byte
+		want     string
+	}{
+		{
+			name:     "Read tool with file_path returns file path",
+			toolName: "Read",
+			input:    []byte(`{"file_path": "/home/user/test.go"}`),
+			want:     "/home/user/test.go",
+		},
+		{
+			name:     "Edit tool with file_path returns file path",
+			toolName: "Edit",
+			input:    []byte(`{"file_path": "/home/user/main.go"}`),
+			want:     "/home/user/main.go",
+		},
+		{
+			name:     "Write tool with file_path returns file path",
+			toolName: "Write",
+			input:    []byte(`{"file_path": "/home/user/output.txt"}`),
+			want:     "/home/user/output.txt",
+		},
+		{
+			name:     "Glob tool with pattern returns pattern",
+			toolName: "Glob",
+			input:    []byte(`{"pattern": "**/*.go"}`),
+			want:     "**/*.go",
+		},
+		{
+			name:     "Grep tool with pattern returns pattern",
+			toolName: "Grep",
+			input:    []byte(`{"pattern": "func.*Error"}`),
+			want:     "func.*Error",
+		},
+		{
+			name:     "Bash tool with command returns command",
+			toolName: "Bash",
+			input:    []byte(`{"command": "go test ./..."}`),
+			want:     "go test ./...",
+		},
+		{
+			name:     "Task tool with description returns description",
+			toolName: "Task",
+			input:    []byte(`{"description": "run tests"}`),
+			want:     "run tests",
+		},
+		{
+			name:     "unknown tool returns empty string",
+			toolName: "UnknownTool",
+			input:    []byte(`{"some_field": "value"}`),
+			want:     "",
+		},
+		{
+			name:     "nil input returns empty string",
+			toolName: "Read",
+			input:    nil,
+			want:     "",
+		},
+		{
+			name:     "invalid JSON input returns empty string",
+			toolName: "Read",
+			input:    []byte(`{invalid json`),
+			want:     "",
+		},
+		{
+			name:     "missing expected field returns empty string",
+			toolName: "Read",
+			input:    []byte(`{"other_field": "value"}`),
+			want:     "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractToolInputSummary(tt.toolName, tt.input)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestTruncateString(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		maxLen int
+		want   string
+	}{
+		{
+			name:   "string shorter than maxLen unchanged",
+			input:  "hello",
+			maxLen: 10,
+			want:   "hello",
+		},
+		{
+			name:   "string equal to maxLen unchanged",
+			input:  "hello world",
+			maxLen: 11,
+			want:   "hello world",
+		},
+		{
+			name:   "string longer than maxLen truncated with ellipsis",
+			input:  "hello world this is a long string",
+			maxLen: 15,
+			want:   "hello world ...",
+		},
+		{
+			name:   "empty string returns empty string",
+			input:  "",
+			maxLen: 10,
+			want:   "",
+		},
+		{
+			name:   "maxLen of 3 returns ellipsis only",
+			input:  "hello",
+			maxLen: 3,
+			want:   "...",
+		},
+		{
+			name:   "maxLen of 4 returns single char plus ellipsis",
+			input:  "hello",
+			maxLen: 4,
+			want:   "h...",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := truncateString(tt.input, tt.maxLen)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

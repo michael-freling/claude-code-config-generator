@@ -489,3 +489,90 @@ func TestPromptGenerator_AllMethodsReturnValidPrompts(t *testing.T) {
 		})
 	}
 }
+
+func TestPromptGenerator_GenerateFixCIPrompt(t *testing.T) {
+	tests := []struct {
+		name        string
+		failures    string
+		wantErr     bool
+		errContains string
+		wantContain []string
+	}{
+		{
+			name:     "valid failures string returns prompt containing failures",
+			failures: "Test failed: TestFoo\nExpected: 1\nGot: 2",
+			wantErr:  false,
+			wantContain: []string{
+				"Test failed: TestFoo",
+				"Expected: 1",
+				"Got: 2",
+			},
+		},
+		{
+			name:        "empty failures string returns error",
+			failures:    "",
+			wantErr:     true,
+			errContains: "failures cannot be empty",
+		},
+		{
+			name:     "failures with special characters works correctly",
+			failures: "Error: syntax error near '&&' in file test_*.go",
+			wantErr:  false,
+			wantContain: []string{
+				"Error: syntax error near '&&' in file test_*.go",
+			},
+		},
+		{
+			name: "failures with newlines preserves newlines in output",
+			failures: `line 1
+line 2
+line 3`,
+			wantErr: false,
+			wantContain: []string{
+				"line 1",
+				"line 2",
+				"line 3",
+			},
+		},
+		{
+			name: "multi-line failure output all lines present in prompt",
+			failures: `=== RUN   TestExample
+--- FAIL: TestExample (0.00s)
+    example_test.go:10: Expected true, got false
+FAIL
+exit status 1`,
+			wantErr: false,
+			wantContain: []string{
+				"=== RUN   TestExample",
+				"--- FAIL: TestExample (0.00s)",
+				"example_test.go:10: Expected true, got false",
+				"FAIL",
+				"exit status 1",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pg, err := NewPromptGenerator()
+			require.NoError(t, err)
+
+			got, err := pg.GenerateFixCIPrompt(tt.failures)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+				return
+			}
+
+			require.NoError(t, err)
+			assert.NotEmpty(t, got)
+
+			for _, want := range tt.wantContain {
+				assert.Contains(t, got, want)
+			}
+		})
+	}
+}
