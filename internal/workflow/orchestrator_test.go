@@ -2048,7 +2048,123 @@ func TestOrchestrator_failWorkflow(t *testing.T) {
 			assert.Equal(t, PhaseFailed, state.CurrentPhase)
 			assert.NotNil(t, state.Error)
 			assert.Equal(t, tt.err.Error(), state.Error.Message)
+			assert.Equal(t, FailureTypeExecution, state.Error.FailureType)
 			assert.Equal(t, StatusFailed, state.Phases[PhasePlanning].Status)
+			mockSM.AssertExpectations(t)
+		})
+	}
+}
+
+func TestOrchestrator_failWorkflowCI(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		setupMocks func(*MockStateManager)
+	}{
+		{
+			name: "successfully transitions to failed state with CI failure type",
+			err:  errors.New("ci check failed"),
+			setupMocks: func(sm *MockStateManager) {
+				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockSM := new(MockStateManager)
+			tt.setupMocks(mockSM)
+
+			o := &Orchestrator{
+				stateManager: mockSM,
+			}
+
+			state := &WorkflowState{
+				Name:         "test-workflow",
+				CurrentPhase: PhasePlanning,
+				Phases: map[Phase]*PhaseState{
+					PhasePlanning: {Status: StatusInProgress},
+				},
+			}
+
+			err := o.failWorkflowCI(state, tt.err)
+
+			require.Error(t, err)
+			assert.Equal(t, PhaseFailed, state.CurrentPhase)
+			assert.NotNil(t, state.Error)
+			assert.Equal(t, tt.err.Error(), state.Error.Message)
+			assert.Equal(t, FailureTypeCI, state.Error.FailureType)
+			assert.Equal(t, StatusFailed, state.Phases[PhasePlanning].Status)
+			mockSM.AssertExpectations(t)
+		})
+	}
+}
+
+func TestOrchestrator_failWorkflowWithType(t *testing.T) {
+	tests := []struct {
+		name        string
+		err         error
+		failureType FailureType
+		setupMocks  func(*MockStateManager)
+	}{
+		{
+			name:        "successfully transitions to failed state with execution failure type",
+			err:         errors.New("execution failed"),
+			failureType: FailureTypeExecution,
+			setupMocks: func(sm *MockStateManager) {
+				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
+			},
+		},
+		{
+			name:        "successfully transitions to failed state with CI failure type",
+			err:         errors.New("ci check failed"),
+			failureType: FailureTypeCI,
+			setupMocks: func(sm *MockStateManager) {
+				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
+			},
+		},
+		{
+			name:        "handles save state error",
+			err:         errors.New("original error"),
+			failureType: FailureTypeExecution,
+			setupMocks: func(sm *MockStateManager) {
+				sm.On("SaveState", "test-workflow", mock.Anything).Return(errors.New("save failed"))
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockSM := new(MockStateManager)
+			tt.setupMocks(mockSM)
+
+			o := &Orchestrator{
+				stateManager: mockSM,
+			}
+
+			state := &WorkflowState{
+				Name:         "test-workflow",
+				CurrentPhase: PhasePlanning,
+				Phases: map[Phase]*PhaseState{
+					PhasePlanning: {Status: StatusInProgress},
+				},
+			}
+
+			err := o.failWorkflowWithType(state, tt.err, tt.failureType)
+
+			require.Error(t, err)
+			assert.Equal(t, PhaseFailed, state.CurrentPhase)
+			assert.NotNil(t, state.Error)
+			assert.Equal(t, tt.failureType, state.Error.FailureType)
+			assert.Equal(t, StatusFailed, state.Phases[PhasePlanning].Status)
+
+			if tt.name == "handles save state error" {
+				assert.Contains(t, err.Error(), "failed to save failed state")
+				assert.Contains(t, err.Error(), "original error")
+			} else {
+				assert.Equal(t, tt.err.Error(), err.Error())
+			}
+
 			mockSM.AssertExpectations(t)
 		})
 	}

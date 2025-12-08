@@ -150,6 +150,20 @@ func TestCountJobStatuses(t *testing.T) {
 			wantFailed:  1,
 			wantPending: 1,
 		},
+		{
+			name:        "unknown state treated as pending",
+			output:      `[{"name":"build","state":"UNKNOWN_STATE"}]`,
+			wantPassed:  0,
+			wantFailed:  0,
+			wantPending: 1,
+		},
+		{
+			name:        "mixed unknown and known states",
+			output:      `[{"name":"build","state":"SUCCESS"},{"name":"test","state":"WEIRD_STATE"},{"name":"lint","state":"FAILURE"}]`,
+			wantPassed:  1,
+			wantFailed:  1,
+			wantPending: 1,
+		},
 	}
 
 	for _, tt := range tests {
@@ -203,6 +217,64 @@ func TestNewCIChecker(t *testing.T) {
 	}
 }
 
+func TestNewCICheckerWithOptions(t *testing.T) {
+	tests := []struct {
+		name               string
+		workingDir         string
+		checkInterval      time.Duration
+		commandTimeout     time.Duration
+		initialDelay       time.Duration
+		wantInterval       time.Duration
+		wantCommandTimeout time.Duration
+		wantInitialDelay   time.Duration
+	}{
+		{
+			name:               "all custom values",
+			workingDir:         "/tmp/test",
+			checkInterval:      10 * time.Second,
+			commandTimeout:     3 * time.Minute,
+			initialDelay:       2 * time.Minute,
+			wantInterval:       10 * time.Second,
+			wantCommandTimeout: 3 * time.Minute,
+			wantInitialDelay:   2 * time.Minute,
+		},
+		{
+			name:               "all default values (zeros)",
+			workingDir:         "/tmp/test",
+			checkInterval:      0,
+			commandTimeout:     0,
+			initialDelay:       0,
+			wantInterval:       30 * time.Second,
+			wantCommandTimeout: 2 * time.Minute,
+			wantInitialDelay:   1 * time.Minute,
+		},
+		{
+			name:               "mixed custom and default values",
+			workingDir:         "/tmp/test",
+			checkInterval:      15 * time.Second,
+			commandTimeout:     0,
+			initialDelay:       30 * time.Second,
+			wantInterval:       15 * time.Second,
+			wantCommandTimeout: 2 * time.Minute,
+			wantInitialDelay:   30 * time.Second,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			checker := NewCICheckerWithOptions(tt.workingDir, tt.checkInterval, tt.commandTimeout, tt.initialDelay)
+			require.NotNil(t, checker)
+
+			concreteChecker, ok := checker.(*ciChecker)
+			require.True(t, ok)
+			assert.Equal(t, tt.workingDir, concreteChecker.workingDir)
+			assert.Equal(t, tt.wantInterval, concreteChecker.checkInterval)
+			assert.Equal(t, tt.wantCommandTimeout, concreteChecker.commandTimeout)
+			assert.Equal(t, tt.wantInitialDelay, concreteChecker.initialDelay)
+		})
+	}
+}
+
 func TestCIChecker_CheckCI_NotInstalled(t *testing.T) {
 	checker := NewCIChecker("/nonexistent/path/that/should/not/exist", 1*time.Second, 10*time.Second)
 	ctx := context.Background()
@@ -223,6 +295,186 @@ func TestCIChecker_CheckCI_NoPR(t *testing.T) {
 	require.Error(t, err)
 	require.NotNil(t, result)
 	assert.False(t, result.Passed)
+}
+
+func TestParseCIOutput_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name           string
+		output         string
+		wantStatus     string
+		wantFailedJobs []string
+	}{
+		{
+			name:           "empty string",
+			output:         "",
+			wantStatus:     "pending",
+			wantFailedJobs: []string{},
+		},
+		{
+			name:           "malformed JSON - not an array",
+			output:         `{"name":"build","state":"SUCCESS"}`,
+			wantStatus:     "pending",
+			wantFailedJobs: []string{},
+		},
+		{
+			name:           "malformed JSON - incomplete",
+			output:         `[{"name":"build","state":`,
+			wantStatus:     "pending",
+			wantFailedJobs: []string{},
+		},
+		{
+			name:           "malformed JSON - invalid syntax",
+			output:         `[{name:build,state:SUCCESS}]`,
+			wantStatus:     "pending",
+			wantFailedJobs: []string{},
+		},
+		{
+			name:           "unknown state value",
+			output:         `[{"name":"build","state":"UNKNOWN_STATE"}]`,
+			wantStatus:     "pending",
+			wantFailedJobs: []string{},
+		},
+		{
+			name:           "multiple unknown state values",
+			output:         `[{"name":"build","state":"UNKNOWN"},{"name":"test","state":"WEIRD_STATE"}]`,
+			wantStatus:     "pending",
+			wantFailedJobs: []string{},
+		},
+		{
+			name:           "mixed case state values - lowercase success",
+			output:         `[{"name":"build","state":"success"},{"name":"test","state":"success"}]`,
+			wantStatus:     "success",
+			wantFailedJobs: []string{},
+		},
+		{
+			name:           "mixed case state values - mixed success and failure",
+			output:         `[{"name":"build","state":"SuCcEsS"},{"name":"test","state":"FaIlUrE"}]`,
+			wantStatus:     "failure",
+			wantFailedJobs: []string{"test"},
+		},
+		{
+			name:           "very long job name",
+			output:         `[{"name":"this-is-a-very-long-job-name-that-might-appear-in-deeply-nested-CI-workflows-with-matrix-builds-and-multiple-stages-and-substages","state":"FAILURE"}]`,
+			wantStatus:     "failure",
+			wantFailedJobs: []string{"this-is-a-very-long-job-name-that-might-appear-in-deeply-nested-CI-workflows-with-matrix-builds-and-multiple-stages-and-substages"},
+		},
+		{
+			name:           "unicode characters in job name - emojis",
+			output:         `[{"name":"test-🚀-build","state":"FAILURE"},{"name":"deploy-✅","state":"SUCCESS"}]`,
+			wantStatus:     "failure",
+			wantFailedJobs: []string{"test-🚀-build"},
+		},
+		{
+			name:           "unicode characters in job name - chinese",
+			output:         `[{"name":"测试构建","state":"SUCCESS"},{"name":"部署失败","state":"FAILURE"}]`,
+			wantStatus:     "failure",
+			wantFailedJobs: []string{"部署失败"},
+		},
+		{
+			name:           "unicode characters in job name - japanese",
+			output:         `[{"name":"ビルド・テスト","state":"FAILURE"}]`,
+			wantStatus:     "failure",
+			wantFailedJobs: []string{"ビルド・テスト"},
+		},
+		{
+			name:           "null name field",
+			output:         `[{"name":null,"state":"SUCCESS"}]`,
+			wantStatus:     "success",
+			wantFailedJobs: []string{},
+		},
+		{
+			name:           "null state field",
+			output:         `[{"name":"build","state":null}]`,
+			wantStatus:     "pending",
+			wantFailedJobs: []string{},
+		},
+		{
+			name:           "missing name field",
+			output:         `[{"state":"SUCCESS"}]`,
+			wantStatus:     "success",
+			wantFailedJobs: []string{},
+		},
+		{
+			name:           "missing state field",
+			output:         `[{"name":"build"}]`,
+			wantStatus:     "pending",
+			wantFailedJobs: []string{},
+		},
+		{
+			name:           "empty object in array",
+			output:         `[{}]`,
+			wantStatus:     "pending",
+			wantFailedJobs: []string{},
+		},
+		{
+			name:           "mix of valid and invalid entries",
+			output:         `[{"name":"build","state":"SUCCESS"},{},{"name":"test","state":"FAILURE"}]`,
+			wantStatus:     "pending",
+			wantFailedJobs: []string{"test"},
+		},
+		{
+			name:           "empty name with failure state",
+			output:         `[{"name":"","state":"FAILURE"}]`,
+			wantStatus:     "failure",
+			wantFailedJobs: []string{""},
+		},
+		{
+			name:           "whitespace in state field",
+			output:         `[{"name":"build","state":" SUCCESS "}]`,
+			wantStatus:     "pending",
+			wantFailedJobs: []string{},
+		},
+		{
+			name:           "special characters in job name",
+			output:         `[{"name":"test/build:integration@v1.2.3","state":"FAILURE"}]`,
+			wantStatus:     "failure",
+			wantFailedJobs: []string{"test/build:integration@v1.2.3"},
+		},
+		{
+			name:           "newlines in JSON",
+			output:         "[\n{\"name\":\"build\",\"state\":\"SUCCESS\"},\n{\"name\":\"test\",\"state\":\"FAILURE\"}\n]",
+			wantStatus:     "failure",
+			wantFailedJobs: []string{"test"},
+		},
+		{
+			name:           "extra fields in JSON",
+			output:         `[{"name":"build","state":"SUCCESS","extra":"field","another":"value"}]`,
+			wantStatus:     "success",
+			wantFailedJobs: []string{},
+		},
+		{
+			name:           "numeric state value",
+			output:         `[{"name":"build","state":123}]`,
+			wantStatus:     "pending",
+			wantFailedJobs: []string{},
+		},
+		{
+			name:           "boolean state value",
+			output:         `[{"name":"build","state":true}]`,
+			wantStatus:     "pending",
+			wantFailedJobs: []string{},
+		},
+		{
+			name:           "large number of jobs",
+			output:         `[{"name":"job1","state":"SUCCESS"},{"name":"job2","state":"SUCCESS"},{"name":"job3","state":"SUCCESS"},{"name":"job4","state":"SUCCESS"},{"name":"job5","state":"SUCCESS"},{"name":"job6","state":"SUCCESS"},{"name":"job7","state":"SUCCESS"},{"name":"job8","state":"SUCCESS"},{"name":"job9","state":"SUCCESS"},{"name":"job10","state":"SUCCESS"}]`,
+			wantStatus:     "success",
+			wantFailedJobs: []string{},
+		},
+		{
+			name:           "all possible failure states",
+			output:         `[{"name":"failed1","state":"FAILURE"},{"name":"failed2","state":"failure"},{"name":"failed3","state":"Failure"}]`,
+			wantStatus:     "failure",
+			wantFailedJobs: []string{"failed1", "failed2", "failed3"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotStatus, gotFailedJobs := parseCIOutput(tt.output)
+			assert.Equal(t, tt.wantStatus, gotStatus)
+			assert.Equal(t, tt.wantFailedJobs, gotFailedJobs)
+		})
+	}
 }
 
 func TestParseCIOutput_PendingStatus(t *testing.T) {
@@ -284,8 +536,8 @@ func TestCIChecker_InitialDelayTimerFiresCorrectly(t *testing.T) {
 	// Create checker with short initial delay for testing
 	// Use a non-existent directory so the command fails immediately
 	checker := NewCICheckerWithOptions(
-		"/nonexistent/path", // workingDir - doesn't exist, so gh command will fail immediately
-		50*time.Millisecond, // checkInterval
+		"/nonexistent/path",  // workingDir - doesn't exist, so gh command will fail immediately
+		50*time.Millisecond,  // checkInterval
 		100*time.Millisecond, // commandTimeout
 		100*time.Millisecond, // initialDelay - short for testing
 	)

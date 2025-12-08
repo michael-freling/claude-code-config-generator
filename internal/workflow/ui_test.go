@@ -1764,3 +1764,262 @@ func TestStreamingSpinner_StopWithoutStart(t *testing.T) {
 		})
 	}
 }
+
+func TestCISpinner_formatMessage(t *testing.T) {
+	tests := []struct {
+		name         string
+		message      string
+		event        CIProgressEvent
+		wantContains []string
+	}{
+		{
+			name:    "waiting event shows initial delay and next check-in",
+			message: "Waiting for CI",
+			event: CIProgressEvent{
+				Type:        "waiting",
+				Elapsed:     30 * time.Second,
+				NextCheckIn: 15 * time.Second,
+			},
+			wantContains: []string{
+				"Waiting for CI",
+				"30s",
+				"initial delay",
+				"checking in 15s",
+			},
+		},
+		{
+			name:    "checking event shows checking status",
+			message: "Checking CI",
+			event: CIProgressEvent{
+				Type:    "checking",
+				Elapsed: 45 * time.Second,
+			},
+			wantContains: []string{
+				"Checking CI",
+				"45s",
+				"checking...",
+			},
+		},
+		{
+			name:    "retry event shows retry after timeout",
+			message: "Retrying CI",
+			event: CIProgressEvent{
+				Type:    "retry",
+				Elapsed: 60 * time.Second,
+			},
+			wantContains: []string{
+				"Retrying CI",
+				"1m 0s",
+				"retrying after timeout",
+			},
+		},
+		{
+			name:    "status event shows job counts",
+			message: "CI Status",
+			event: CIProgressEvent{
+				Type:        "status",
+				Elapsed:     90 * time.Second,
+				JobsPassed:  5,
+				JobsFailed:  1,
+				JobsPending: 2,
+			},
+			wantContains: []string{
+				"CI Status",
+				"1m 30s",
+				"5 passed",
+				"1 failed",
+				"2 pending",
+			},
+		},
+		{
+			name:    "unknown event type shows basic message",
+			message: "Unknown",
+			event: CIProgressEvent{
+				Type:    "unknown",
+				Elapsed: 10 * time.Second,
+			},
+			wantContains: []string{
+				"Unknown",
+				"10s",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spinner := &CISpinner{
+				message:   tt.message,
+				lastEvent: tt.event,
+			}
+
+			got := spinner.formatMessage()
+			for _, want := range tt.wantContains {
+				assert.Contains(t, got, want)
+			}
+		})
+	}
+}
+
+func TestCISpinner_OnProgress(t *testing.T) {
+	tests := []struct {
+		name  string
+		event CIProgressEvent
+	}{
+		{
+			name: "updates lastEvent on progress",
+			event: CIProgressEvent{
+				Type:        "status",
+				Elapsed:     30 * time.Second,
+				JobsPassed:  3,
+				JobsFailed:  0,
+				JobsPending: 1,
+			},
+		},
+		{
+			name: "handles waiting event",
+			event: CIProgressEvent{
+				Type:        "waiting",
+				Elapsed:     15 * time.Second,
+				NextCheckIn: 10 * time.Second,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spinner := NewCISpinner("Testing")
+
+			spinner.OnProgress(tt.event)
+
+			assert.Equal(t, tt.event, spinner.lastEvent)
+		})
+	}
+}
+
+func TestCISpinner_Lifecycle(t *testing.T) {
+	tests := []struct {
+		name string
+	}{
+		{
+			name: "Start and Stop cycle works correctly",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spinner := NewCISpinner("Testing CI")
+
+			spinner.Start()
+			time.Sleep(10 * time.Millisecond)
+			assert.True(t, spinner.running)
+
+			spinner.Stop()
+			time.Sleep(10 * time.Millisecond)
+			assert.False(t, spinner.running)
+		})
+	}
+}
+
+func TestCISpinner_DoubleStart(t *testing.T) {
+	tests := []struct {
+		name string
+	}{
+		{
+			name: "double-start is idempotent",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spinner := NewCISpinner("Testing")
+
+			spinner.Start()
+			time.Sleep(10 * time.Millisecond)
+			assert.True(t, spinner.running)
+
+			spinner.Start()
+			time.Sleep(10 * time.Millisecond)
+			assert.True(t, spinner.running)
+
+			spinner.Stop()
+			time.Sleep(10 * time.Millisecond)
+			assert.False(t, spinner.running)
+		})
+	}
+}
+
+func TestNewCISpinner(t *testing.T) {
+	tests := []struct {
+		name    string
+		message string
+	}{
+		{
+			name:    "creates CI spinner with message",
+			message: "Waiting for CI",
+		},
+		{
+			name:    "creates CI spinner with empty message",
+			message: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := NewCISpinner(tt.message)
+			require.NotNil(t, got)
+			assert.Equal(t, tt.message, got.message)
+			assert.False(t, got.running)
+			assert.NotNil(t, got.done)
+		})
+	}
+}
+
+func TestCISpinner_Success(t *testing.T) {
+	tests := []struct {
+		name    string
+		message string
+	}{
+		{
+			name:    "Success stops spinner and prints message",
+			message: "CI checks passed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spinner := NewCISpinner("Testing")
+
+			spinner.Start()
+			time.Sleep(10 * time.Millisecond)
+
+			spinner.Success(tt.message)
+			time.Sleep(10 * time.Millisecond)
+			assert.False(t, spinner.running)
+		})
+	}
+}
+
+func TestCISpinner_Fail(t *testing.T) {
+	tests := []struct {
+		name    string
+		message string
+	}{
+		{
+			name:    "Fail stops spinner and prints error message",
+			message: "CI checks failed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spinner := NewCISpinner("Testing")
+
+			spinner.Start()
+			time.Sleep(10 * time.Millisecond)
+
+			spinner.Fail(tt.message)
+			time.Sleep(10 * time.Millisecond)
+			assert.False(t, spinner.running)
+		})
+	}
+}
