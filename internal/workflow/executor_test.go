@@ -303,21 +303,13 @@ func TestClaudeExecutor_findClaudePath(t *testing.T) {
 	tests := []struct {
 		name       string
 		claudePath string
+		wantPath   string
 		wantErr    bool
 	}{
 		{
 			name:       "returns custom path when set",
 			claudePath: "/usr/local/bin/claude",
-			wantErr:    false,
-		},
-		{
-			name:       "uses default when claudePath is claude",
-			claudePath: "claude",
-			wantErr:    false,
-		},
-		{
-			name:       "uses default when claudePath is empty",
-			claudePath: "",
+			wantPath:   "/usr/local/bin/claude",
 			wantErr:    false,
 		},
 	}
@@ -338,12 +330,28 @@ func TestClaudeExecutor_findClaudePath(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			if tt.claudePath != "" && tt.claudePath != "claude" {
-				assert.Equal(t, tt.claudePath, got)
-			} else {
-				assert.NotEmpty(t, got)
-			}
+			assert.Equal(t, tt.wantPath, got)
 		})
+	}
+}
+
+func TestClaudeExecutor_findClaudePath_FromPATH(t *testing.T) {
+	// This test checks the behavior when claudePath is "claude" or empty
+	// and relies on exec.LookPath to find claude in PATH
+	executor := &claudeExecutor{
+		claudePath: "claude",
+	}
+
+	got, err := executor.findClaudePath()
+
+	// claude may or may not be in PATH depending on the environment
+	if err != nil {
+		// If claude is not in PATH, we should get ErrClaudeNotFound
+		assert.ErrorIs(t, err, ErrClaudeNotFound)
+		assert.Empty(t, got)
+	} else {
+		// If claude is in PATH, we should get a valid path
+		assert.NotEmpty(t, got)
 	}
 }
 
@@ -881,6 +889,85 @@ func TestClaudeExecutor_ExecuteStreaming_ClaudeNotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "claude CLI not found")
 }
 
+func TestClaudeExecutor_ExecuteStreaming_WithWorkingDirAndEnv(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	scriptPath := filepath.Join(tmpDir, "claude-test")
+	script := `#!/bin/bash
+echo '{"type":"result","result":"success","is_error":false}'
+exit 0`
+	err := os.WriteFile(scriptPath, []byte(script), 0755)
+	require.NoError(t, err)
+
+	executor := NewClaudeExecutorWithPath(scriptPath)
+	ctx := context.Background()
+
+	config := ExecuteConfig{
+		Prompt:           "test prompt",
+		WorkingDirectory: tmpDir,
+		Timeout:          5 * time.Second,
+		Env: map[string]string{
+			"TEST_VAR": "test_value",
+		},
+	}
+
+	got, err := executor.ExecuteStreaming(ctx, config, nil)
+
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Contains(t, got.Output, "success")
+}
+
+func TestClaudeExecutor_Execute_NoTimeout(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	scriptPath := filepath.Join(tmpDir, "claude-fast")
+	script := `#!/bin/bash
+echo "quick response"
+exit 0`
+	err := os.WriteFile(scriptPath, []byte(script), 0755)
+	require.NoError(t, err)
+
+	executor := NewClaudeExecutorWithPath(scriptPath)
+	ctx := context.Background()
+
+	// No timeout set - should complete quickly
+	config := ExecuteConfig{
+		Prompt: "test prompt",
+	}
+
+	got, err := executor.Execute(ctx, config)
+
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Contains(t, got.Output, "quick response")
+}
+
+func TestClaudeExecutor_ExecuteStreaming_NoTimeout(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	scriptPath := filepath.Join(tmpDir, "claude-fast-stream")
+	script := `#!/bin/bash
+echo '{"type":"result","result":"quick","is_error":false}'
+exit 0`
+	err := os.WriteFile(scriptPath, []byte(script), 0755)
+	require.NoError(t, err)
+
+	executor := NewClaudeExecutorWithPath(scriptPath)
+	ctx := context.Background()
+
+	// No timeout set
+	config := ExecuteConfig{
+		Prompt: "test prompt",
+	}
+
+	got, err := executor.ExecuteStreaming(ctx, config, nil)
+
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Contains(t, got.Output, "quick")
+}
+
 func TestExtractToolInputSummary(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -970,6 +1057,285 @@ func TestExtractToolInputSummary(t *testing.T) {
 			}
 			got := extractToolInputSummary(tt.toolName, input)
 			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestClaudeExecutor_ExecuteStreaming_ScannerError(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	tests := []struct {
+		name        string
+		script      string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name: "handles scanner error with very large line",
+			script: `#!/bin/bash
+# Generate a line that exceeds the scanner buffer
+python3 -c "print('x' * 2000000)"
+exit 0`,
+			wantErr:     true,
+			errContains: "error reading stdout",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scriptPath := filepath.Join(tmpDir, "claude-scanner-error")
+			err := os.WriteFile(scriptPath, []byte(tt.script), 0755)
+			require.NoError(t, err)
+
+			executor := NewClaudeExecutorWithPath(scriptPath)
+			ctx := context.Background()
+
+			config := ExecuteConfig{
+				Prompt:  "test prompt",
+				Timeout: 5 * time.Second,
+			}
+
+			got, err := executor.ExecuteStreaming(ctx, config, nil)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+				require.NotNil(t, got)
+				return
+			}
+
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestClaudeExecutor_ExecuteStreaming_NilFinalChunk(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	tests := []struct {
+		name       string
+		script     string
+		wantOutput string
+	}{
+		{
+			name: "handles nil finalChunk - no result type in output",
+			script: `#!/bin/bash
+echo '{"type":"system","subtype":"init"}'
+echo '{"type":"assistant","message":{"content":[{"type":"text","text":"Hello"}]}}'
+exit 0`,
+			wantOutput: "",
+		},
+		{
+			name: "handles output with only assistant messages",
+			script: `#!/bin/bash
+echo '{"type":"assistant","message":{"content":[{"type":"text","text":"Processing"}]}}'
+echo '{"type":"assistant","message":{"content":[{"type":"text","text":"Done"}]}}'
+exit 0`,
+			wantOutput: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scriptPath := filepath.Join(tmpDir, "claude-nil-chunk")
+			err := os.WriteFile(scriptPath, []byte(tt.script), 0755)
+			require.NoError(t, err)
+
+			executor := NewClaudeExecutorWithPath(scriptPath)
+			ctx := context.Background()
+
+			config := ExecuteConfig{
+				Prompt:  "test prompt",
+				Timeout: 5 * time.Second,
+			}
+
+			got, err := executor.ExecuteStreaming(ctx, config, nil)
+
+			require.NoError(t, err)
+			require.NotNil(t, got)
+			assert.Equal(t, tt.wantOutput, got.Output)
+			assert.Equal(t, 0, got.ExitCode)
+		})
+	}
+}
+
+func TestClaudeExecutor_ExecuteStreaming_ContextCancellation(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	tests := []struct {
+		name        string
+		script      string
+		cancelDelay time.Duration
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name: "handles context cancellation during streaming",
+			script: `#!/bin/bash
+trap 'exit 1' TERM INT
+echo '{"type":"system","subtype":"init"}'
+sleep 10
+echo '{"type":"result","result":"should not reach here","is_error":false}'
+exit 0`,
+			cancelDelay: 50 * time.Millisecond,
+			wantErr:     true,
+			errContains: "exit code -1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scriptPath := filepath.Join(tmpDir, "claude-cancel")
+			err := os.WriteFile(scriptPath, []byte(tt.script), 0755)
+			require.NoError(t, err)
+
+			executor := NewClaudeExecutorWithPath(scriptPath)
+			ctx, cancel := context.WithCancel(context.Background())
+
+			go func() {
+				time.Sleep(tt.cancelDelay)
+				cancel()
+			}()
+
+			config := ExecuteConfig{
+				Prompt: "test prompt",
+			}
+
+			got, err := executor.ExecuteStreaming(ctx, config, nil)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+				require.NotNil(t, got)
+				return
+			}
+
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestClaudeExecutor_Execute_WithTimeout(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	tests := []struct {
+		name        string
+		script      string
+		timeout     time.Duration
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name: "respects timeout setting in Execute",
+			script: `#!/bin/bash
+sleep 5
+echo "completed"
+exit 0`,
+			timeout:     100 * time.Millisecond,
+			wantErr:     true,
+			errContains: "timeout",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scriptPath := filepath.Join(tmpDir, "claude-timeout-test")
+			err := os.WriteFile(scriptPath, []byte(tt.script), 0755)
+			require.NoError(t, err)
+
+			executor := NewClaudeExecutorWithPath(scriptPath)
+			ctx := context.Background()
+
+			config := ExecuteConfig{
+				Prompt:  "test prompt",
+				Timeout: tt.timeout,
+			}
+
+			got, err := executor.Execute(ctx, config)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+				require.NotNil(t, got)
+				return
+			}
+
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestClaudeExecutor_Execute_NonZeroExitCode(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	tests := []struct {
+		name        string
+		script      string
+		exitCode    int
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name: "handles exit code 1",
+			script: `#!/bin/bash
+echo "error occurred" >&2
+exit 1`,
+			exitCode:    1,
+			wantErr:     true,
+			errContains: "exit code 1",
+		},
+		{
+			name: "handles exit code 2",
+			script: `#!/bin/bash
+echo "critical error" >&2
+exit 2`,
+			exitCode:    2,
+			wantErr:     true,
+			errContains: "exit code 2",
+		},
+		{
+			name: "handles exit code 127",
+			script: `#!/bin/bash
+echo "command not found" >&2
+exit 127`,
+			exitCode:    127,
+			wantErr:     true,
+			errContains: "exit code 127",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scriptPath := filepath.Join(tmpDir, "claude-exit-code")
+			err := os.WriteFile(scriptPath, []byte(tt.script), 0755)
+			require.NoError(t, err)
+
+			executor := NewClaudeExecutorWithPath(scriptPath)
+			ctx := context.Background()
+
+			config := ExecuteConfig{
+				Prompt:  "test prompt",
+				Timeout: 5 * time.Second,
+			}
+
+			got, err := executor.Execute(ctx, config)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Equal(t, tt.exitCode, got.ExitCode)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+				return
+			}
+
+			require.NoError(t, err)
 		})
 	}
 }
