@@ -20,6 +20,7 @@ var (
 	timeoutImplement           time.Duration
 	timeoutRefactoring         time.Duration
 	timeoutPRSplit             time.Duration
+	verbose                    bool
 )
 
 func main() {
@@ -44,6 +45,7 @@ func newRootCmd() *cobra.Command {
 	rootCmd.PersistentFlags().DurationVar(&timeoutImplement, "timeout-implementation", 6*time.Hour, "implementation phase timeout")
 	rootCmd.PersistentFlags().DurationVar(&timeoutRefactoring, "timeout-refactoring", 6*time.Hour, "refactoring phase timeout")
 	rootCmd.PersistentFlags().DurationVar(&timeoutPRSplit, "timeout-pr-split", 1*time.Hour, "PR split phase timeout")
+	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "enable verbose output showing internal operations")
 
 	rootCmd.AddCommand(newStartCmd())
 	rootCmd.AddCommand(newListCmd())
@@ -66,6 +68,9 @@ func createOrchestrator() (*workflow.Orchestrator, error) {
 		Implementation: timeoutImplement,
 		Refactoring:    timeoutRefactoring,
 		PRSplit:        timeoutPRSplit,
+	}
+	if verbose {
+		config.LogLevel = workflow.LogLevelVerbose
 	}
 	return workflow.NewOrchestratorWithConfig(config)
 }

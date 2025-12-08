@@ -71,29 +71,33 @@ type ExecuteResult struct {
 type claudeExecutor struct {
 	claudePath string
 	cmdRunner  CommandRunner
+	logger     Logger
 }
 
 // NewClaudeExecutor creates executor with default settings
-func NewClaudeExecutor() ClaudeExecutor {
+func NewClaudeExecutor(logger Logger) ClaudeExecutor {
 	return &claudeExecutor{
 		claudePath: "claude",
 		cmdRunner:  NewCommandRunner(),
+		logger:     logger,
 	}
 }
 
 // NewClaudeExecutorWithPath creates executor with custom claude path
-func NewClaudeExecutorWithPath(claudePath string) ClaudeExecutor {
+func NewClaudeExecutorWithPath(claudePath string, logger Logger) ClaudeExecutor {
 	return &claudeExecutor{
 		claudePath: claudePath,
 		cmdRunner:  NewCommandRunner(),
+		logger:     logger,
 	}
 }
 
 // NewClaudeExecutorWithRunner creates executor with custom command runner (for testing)
-func NewClaudeExecutorWithRunner(claudePath string, cmdRunner CommandRunner) ClaudeExecutor {
+func NewClaudeExecutorWithRunner(claudePath string, cmdRunner CommandRunner, logger Logger) ClaudeExecutor {
 	return &claudeExecutor{
 		claudePath: claudePath,
 		cmdRunner:  cmdRunner,
+		logger:     logger,
 	}
 }
 
@@ -212,6 +216,20 @@ func (e *claudeExecutor) ExecuteStreaming(ctx context.Context, config ExecuteCon
 	args = append(args, config.Prompt)
 	cmd := exec.CommandContext(ctx, claudePath, args...)
 
+	if e.logger != nil {
+		e.logger.Verbose("Executing Claude CLI:")
+		workingDir := config.WorkingDirectory
+		if workingDir == "" {
+			workingDir = "."
+		}
+		e.logger.Verbose("  Working directory: %s", workingDir)
+		if config.Timeout > 0 {
+			e.logger.Verbose("  Timeout: %s", config.Timeout)
+		} else {
+			e.logger.Verbose("  Timeout: none")
+		}
+	}
+
 	if config.WorkingDirectory != "" {
 		cmd.Dir = config.WorkingDirectory
 	}
@@ -242,6 +260,7 @@ func (e *claudeExecutor) ExecuteStreaming(ctx context.Context, config ExecuteCon
 	scanner.Buffer(buf, 1024*1024)
 
 	var finalChunk *StreamChunk
+	toolCallCount := 0
 
 	for scanner.Scan() {
 		line := scanner.Bytes()
@@ -263,6 +282,7 @@ func (e *claudeExecutor) ExecuteStreaming(ctx context.Context, config ExecuteCon
 				for _, content := range chunk.Message.Content {
 					switch content.Type {
 					case "tool_use":
+						toolCallCount++
 						if onProgress != nil {
 							onProgress(ProgressEvent{
 								Type:      "tool_use",
@@ -339,6 +359,11 @@ func (e *claudeExecutor) ExecuteStreaming(ctx context.Context, config ExecuteCon
 		}
 	}
 
+	if e.logger != nil {
+		charCount := len(result.Output)
+		e.logger.Verbose("Claude response received (%s characters, %d tool calls)", formatNumber(charCount), toolCallCount)
+	}
+
 	return result, nil
 }
 
@@ -385,4 +410,12 @@ func extractToolInputSummary(toolName string, input json.RawMessage) string {
 	}
 
 	return ""
+}
+
+// formatNumber formats a number with thousand separators
+func formatNumber(n int) string {
+	if n < 1000 {
+		return fmt.Sprintf("%d", n)
+	}
+	return fmt.Sprintf("%s,%03d", formatNumber(n/1000), n%1000)
 }
