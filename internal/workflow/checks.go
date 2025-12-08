@@ -343,7 +343,7 @@ checkLoop:
 
 // parseCIOutput parses gh pr checks --json output to extract status and failed jobs
 // The output is expected to be JSON array: [{"name":"build","state":"SUCCESS"},...]
-// State values: SUCCESS, FAILURE, PENDING, QUEUED, IN_PROGRESS, SKIPPED, NEUTRAL
+// State values: SUCCESS, FAILURE, PENDING, QUEUED, IN_PROGRESS, SKIPPED, NEUTRAL, CANCELLED
 func parseCIOutput(output string) (string, []string) {
 	var checks []ciCheck
 	if err := json.Unmarshal([]byte(output), &checks); err != nil {
@@ -364,7 +364,7 @@ func parseCIOutput(output string) (string, []string) {
 		switch state {
 		case "SUCCESS", "SKIPPED", "NEUTRAL":
 			// These are considered passing states
-		case "FAILURE":
+		case "FAILURE", "CANCELLED":
 			allPassed = false
 			failedJobs = append(failedJobs, check.Name)
 		case "PENDING", "QUEUED", "IN_PROGRESS", "":
@@ -398,7 +398,7 @@ func countJobStatuses(output string) (passed, failed, pending int) {
 		switch state {
 		case "SUCCESS", "SKIPPED", "NEUTRAL":
 			passed++
-		case "FAILURE":
+		case "FAILURE", "CANCELLED":
 			failed++
 		case "PENDING", "QUEUED", "IN_PROGRESS", "":
 			pending++
