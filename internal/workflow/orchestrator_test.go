@@ -1592,6 +1592,137 @@ func TestParseDiffStat(t *testing.T) {
 	}
 }
 
+func TestOrchestrator_executeRefactoring(t *testing.T) {
+	tests := []struct {
+		name            string
+		initialWorktree string
+		setupMocks      func(*MockStateManager, *MockClaudeExecutor, *MockPromptGenerator, *MockOutputParser, *MockCIChecker)
+		wantErr         bool
+		wantNextPhase   Phase
+	}{
+		{
+			name:            "fails when executor fails",
+			initialWorktree: "/tmp/worktrees/test-workflow",
+			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser, ci *MockCIChecker) {
+				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
+				sm.On("LoadPlan", "test-workflow").Return(&Plan{Summary: "test plan"}, nil)
+				pg.On("GenerateRefactoringPrompt", mock.Anything).Return("refactoring prompt", nil)
+				exec.On("ExecuteStreaming", mock.Anything, mock.Anything, mock.Anything).Return((*ExecuteResult)(nil), errors.New("execution failed"))
+			},
+			wantErr:       true,
+			wantNextPhase: PhaseFailed,
+		},
+		{
+			name:            "fails when LoadPlan fails",
+			initialWorktree: "/tmp/worktrees/test-workflow",
+			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser, ci *MockCIChecker) {
+				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
+				sm.On("LoadPlan", "test-workflow").Return((*Plan)(nil), errors.New("plan not found"))
+			},
+			wantErr:       true,
+			wantNextPhase: PhaseFailed,
+		},
+		{
+			name:            "fails when GenerateRefactoringPrompt fails",
+			initialWorktree: "/tmp/worktrees/test-workflow",
+			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser, ci *MockCIChecker) {
+				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
+				sm.On("LoadPlan", "test-workflow").Return(&Plan{Summary: "test plan"}, nil)
+				pg.On("GenerateRefactoringPrompt", mock.Anything).Return("", errors.New("prompt generation failed"))
+			},
+			wantErr:       true,
+			wantNextPhase: PhaseFailed,
+		},
+		{
+			name:            "fails when ExtractJSON fails",
+			initialWorktree: "/tmp/worktrees/test-workflow",
+			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser, ci *MockCIChecker) {
+				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
+				sm.On("LoadPlan", "test-workflow").Return(&Plan{Summary: "test plan"}, nil)
+				pg.On("GenerateRefactoringPrompt", mock.Anything).Return("refactoring prompt", nil)
+				exec.On("ExecuteStreaming", mock.Anything, mock.Anything, mock.Anything).Return(&ExecuteResult{
+					Output:   "invalid output",
+					ExitCode: 0,
+				}, nil)
+				op.On("ExtractJSON", mock.Anything).Return("", errors.New("no JSON found"))
+				sm.On("SaveRawOutput", "test-workflow", PhaseRefactoring, "invalid output").Return(nil)
+				sm.On("WorkflowDir", "test-workflow").Return("/tmp/workflows/test-workflow")
+			},
+			wantErr:       true,
+			wantNextPhase: PhaseFailed,
+		},
+		{
+			name:            "fails when ParseRefactoringSummary fails",
+			initialWorktree: "/tmp/worktrees/test-workflow",
+			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser, ci *MockCIChecker) {
+				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
+				sm.On("LoadPlan", "test-workflow").Return(&Plan{Summary: "test plan"}, nil)
+				pg.On("GenerateRefactoringPrompt", mock.Anything).Return("refactoring prompt", nil)
+				exec.On("ExecuteStreaming", mock.Anything, mock.Anything, mock.Anything).Return(&ExecuteResult{
+					Output:   "```json\n{\"invalid\": true}\n```",
+					ExitCode: 0,
+				}, nil)
+				op.On("ExtractJSON", mock.Anything).Return("{\"invalid\": true}", nil)
+				op.On("ParseRefactoringSummary", mock.Anything).Return((*RefactoringSummary)(nil), errors.New("invalid summary"))
+				sm.On("SaveRawOutput", "test-workflow", PhaseRefactoring, "```json\n{\"invalid\": true}\n```").Return(nil)
+				sm.On("WorkflowDir", "test-workflow").Return("/tmp/workflows/test-workflow")
+			},
+			wantErr:       true,
+			wantNextPhase: PhaseFailed,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockSM := new(MockStateManager)
+			mockExec := new(MockClaudeExecutor)
+			mockPG := new(MockPromptGenerator)
+			mockOP := new(MockOutputParser)
+			mockCI := new(MockCIChecker)
+
+			tt.setupMocks(mockSM, mockExec, mockPG, mockOP, mockCI)
+
+			o := &Orchestrator{
+				stateManager:    mockSM,
+				executor:        mockExec,
+				promptGenerator: mockPG,
+				parser:          mockOP,
+				config:          DefaultConfig("/tmp/workflows"),
+				ciCheckerFactory: func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker {
+					return mockCI
+				},
+			}
+
+			state := &WorkflowState{
+				Name:         "test-workflow",
+				CurrentPhase: PhaseRefactoring,
+				WorktreePath: tt.initialWorktree,
+				Phases: map[Phase]*PhaseState{
+					PhasePlanning:       {Status: StatusCompleted},
+					PhaseConfirmation:   {Status: StatusCompleted},
+					PhaseImplementation: {Status: StatusCompleted},
+					PhaseRefactoring:    {Status: StatusInProgress},
+					PhasePRSplit:        {Status: StatusPending},
+				},
+			}
+
+			err := o.executeRefactoring(context.Background(), state)
+
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+
+			assert.Equal(t, tt.wantNextPhase, state.CurrentPhase)
+			mockSM.AssertExpectations(t)
+			mockExec.AssertExpectations(t)
+			mockPG.AssertExpectations(t)
+			mockOP.AssertExpectations(t)
+		})
+	}
+}
+
 func TestOrchestrator_executePRSplit(t *testing.T) {
 	tests := []struct {
 		name          string
