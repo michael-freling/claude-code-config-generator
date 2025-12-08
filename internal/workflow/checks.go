@@ -20,9 +20,6 @@ type ciCheck struct {
 	CompletedAt string `json:"completedAt"`
 }
 
-// ErrCICheckTimeout is returned when CI check command times out
-var ErrCICheckTimeout = errors.New("CI check command timed out")
-
 // CIProgressEvent represents a CI check progress update
 type CIProgressEvent struct {
 	Type         string // "waiting", "checking", "retry", "status"
@@ -67,9 +64,12 @@ type ciChecker struct {
 }
 
 // NewCIChecker creates a new CI checker
-func NewCIChecker(workingDir string, checkInterval time.Duration) CIChecker {
+func NewCIChecker(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker {
 	if checkInterval == 0 {
 		checkInterval = 30 * time.Second
+	}
+	if commandTimeout == 0 {
+		commandTimeout = 2 * time.Minute
 	}
 	return &ciChecker{
 		workingDir:     workingDir,
@@ -177,12 +177,12 @@ func (c *ciChecker) checkCIOnce(ctx context.Context, prNumber int) (*CIResult, e
 				return result, fmt.Errorf("failed to check CI status: %w (stderr: %s)", err, stderr.String())
 			}
 		}
+
 		return result, fmt.Errorf("failed to check CI status: %w (stderr: %s)", err, stderr.String())
 	}
 
 	result.Status, result.FailedJobs = parseCIOutput(output)
 	result.Passed = result.Status == "success"
-
 	return result, nil
 }
 
@@ -205,9 +205,6 @@ func (c *ciChecker) WaitForCIWithProgress(ctx context.Context, prNumber int, tim
 	if opts.E2ETestPattern == "" {
 		opts.E2ETestPattern = "e2e|E2E|integration|Integration"
 	}
-
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
 
 	startTime := time.Now()
 

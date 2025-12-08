@@ -21,6 +21,7 @@ type Config struct {
 	DangerouslySkipPermissions bool
 	CICheckInterval            time.Duration
 	CICheckTimeout             time.Duration
+	GHCommandTimeout           time.Duration
 	MaxFixAttempts             int
 }
 
@@ -42,6 +43,7 @@ func DefaultConfig(baseDir string) *Config {
 		DangerouslySkipPermissions: false,
 		CICheckInterval:            30 * time.Second,
 		CICheckTimeout:             30 * time.Minute,
+		GHCommandTimeout:           2 * time.Minute,
 		MaxFixAttempts:             10,
 		Timeouts: PhaseTimeouts{
 			Planning:       1 * time.Hour,
@@ -63,7 +65,7 @@ type Orchestrator struct {
 	worktreeManager WorktreeManager
 
 	// For testing - if nil, creates real checker
-	ciCheckerFactory func(workingDir string, checkInterval time.Duration) CIChecker
+	ciCheckerFactory func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker
 }
 
 // NewOrchestrator creates orchestrator with default config
@@ -512,11 +514,7 @@ func (o *Orchestrator) executeImplementation(ctx context.Context, state *Workflo
 
 		ciSpinner.Fail("CI failed")
 		lastError = formatCIErrors(ciResult)
-		fmt.Printf("\n%s\n", Red("CI failures detected:"))
-		for _, job := range ciResult.FailedJobs {
-			fmt.Printf("  %s %s\n", Red("✗"), job)
-		}
-		fmt.Printf("\n%s\n", ciResult.Output)
+		displayCIFailure(ciResult)
 
 		prompt, err = o.promptGenerator.GenerateFixCIPrompt(lastError)
 		if err != nil {
@@ -652,11 +650,7 @@ func (o *Orchestrator) executeRefactoring(ctx context.Context, state *WorkflowSt
 
 		ciSpinner.Fail("CI failed")
 		lastError = formatCIErrors(ciResult)
-		fmt.Printf("\n%s\n", Red("CI failures detected:"))
-		for _, job := range ciResult.FailedJobs {
-			fmt.Printf("  %s %s\n", Red("✗"), job)
-		}
-		fmt.Printf("\n%s\n", ciResult.Output)
+		displayCIFailure(ciResult)
 
 		prompt, err = o.promptGenerator.GenerateFixCIPrompt(lastError)
 		if err != nil {
@@ -812,11 +806,7 @@ func (o *Orchestrator) executePRSplit(ctx context.Context, state *WorkflowState)
 					fmt.Printf("%s\n", Yellow("Last child PR must pass e2e tests"))
 				}
 				lastError = formatCIErrors(ciResult)
-				fmt.Printf("\n%s\n", Red("CI failures detected:"))
-				for _, job := range ciResult.FailedJobs {
-					fmt.Printf("  %s %s\n", Red("✗"), job)
-				}
-				fmt.Printf("\n%s\n", ciResult.Output)
+				displayCIFailure(ciResult)
 				break
 			}
 
@@ -929,12 +919,14 @@ func parseDiffStat(output string) (*PRMetrics, error) {
 		if i == len(lines)-1 {
 			parts := strings.Fields(line)
 			if len(parts) >= 2 {
-				filesChanged, _ := strconv.Atoi(parts[0])
-				metrics.FilesChanged = filesChanged
+				if filesChanged, err := strconv.Atoi(parts[0]); err == nil {
+					metrics.FilesChanged = filesChanged
+				}
 			}
 			if len(parts) >= 4 {
-				linesChanged, _ := strconv.Atoi(parts[3])
-				metrics.LinesChanged = linesChanged
+				if linesChanged, err := strconv.Atoi(parts[3]); err == nil {
+					metrics.LinesChanged = linesChanged
+				}
 			}
 			continue
 		}
@@ -1031,10 +1023,19 @@ func formatCIErrors(result *CIResult) string {
 	return builder.String()
 }
 
+// displayCIFailure displays CI failures to the console
+func displayCIFailure(ciResult *CIResult) {
+	fmt.Printf("\n%s\n", Red("CI failures detected:"))
+	for _, job := range ciResult.FailedJobs {
+		fmt.Printf("  %s %s\n", Red("✗"), job)
+	}
+	fmt.Printf("\n%s\n", ciResult.Output)
+}
+
 // getCIChecker creates or retrieves a CIChecker for the given working directory
 func (o *Orchestrator) getCIChecker(workingDir string) CIChecker {
 	if o.ciCheckerFactory != nil {
-		return o.ciCheckerFactory(workingDir, o.config.CICheckInterval)
+		return o.ciCheckerFactory(workingDir, o.config.CICheckInterval, o.config.GHCommandTimeout)
 	}
-	return NewCIChecker(workingDir, o.config.CICheckInterval)
+	return NewCIChecker(workingDir, o.config.CICheckInterval, o.config.GHCommandTimeout)
 }

@@ -191,4 +191,5 @@ var (
 	ErrClaude              = errors.New("claude execution failed")
 	ErrParseJSON           = errors.New("failed to parse JSON output")
 	ErrUserCancelled       = errors.New("workflow cancelled by user")
+	ErrCICheckTimeout      = errors.New("CI check command timeout")
 )

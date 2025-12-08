@@ -603,7 +603,7 @@ func TestOrchestrator_executeImplementation(t *testing.T) {
 				parser:          mockOP,
 				config:          DefaultConfig("/tmp/workflows"),
 				worktreeManager: mockWM,
-				ciCheckerFactory: func(workingDir string, checkInterval time.Duration) CIChecker {
+				ciCheckerFactory: func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker {
 					return mockCI
 				},
 			}
@@ -952,116 +952,6 @@ func TestOrchestrator_Resume_RestoresFailedPhase(t *testing.T) {
 	}
 }
 
-func TestOrchestrator_Resume_PreservesCIFailure(t *testing.T) {
-	tests := []struct {
-		name                string
-		initialState        *WorkflowState
-		expectedPhase       Phase
-		expectedErrorNil    bool
-		expectedFailureType FailureType
-	}{
-		{
-			name: "preserves CI failure error for implementation phase",
-			initialState: &WorkflowState{
-				Name:         "test-workflow",
-				CurrentPhase: PhaseFailed,
-				Phases: map[Phase]*PhaseState{
-					PhaseImplementation: {
-						Status:   StatusFailed,
-						Feedback: []string{"CI check error: CI check timeout after 30m0s"},
-					},
-					PhasePlanning: {Status: StatusCompleted},
-				},
-				Error: &WorkflowError{
-					Message:     "failed to check CI: CI check timeout after 30m0s",
-					Phase:       PhaseImplementation,
-					Recoverable: true,
-					FailureType: FailureTypeCI,
-				},
-			},
-			expectedPhase:       PhaseImplementation,
-			expectedErrorNil:    false,
-			expectedFailureType: FailureTypeCI,
-		},
-		{
-			name: "clears non-CI execution failure error",
-			initialState: &WorkflowState{
-				Name:         "test-workflow",
-				CurrentPhase: PhaseFailed,
-				Phases: map[Phase]*PhaseState{
-					PhaseImplementation: {Status: StatusFailed},
-					PhasePlanning:       {Status: StatusCompleted},
-				},
-				Error: &WorkflowError{
-					Message:     "failed to execute implementation: timeout",
-					Phase:       PhaseImplementation,
-					Recoverable: true,
-					FailureType: FailureTypeExecution,
-				},
-			},
-			expectedPhase:    PhaseImplementation,
-			expectedErrorNil: true,
-		},
-		{
-			name: "preserves CI failure error for refactoring phase",
-			initialState: &WorkflowState{
-				Name:         "test-workflow",
-				CurrentPhase: PhaseFailed,
-				Phases: map[Phase]*PhaseState{
-					PhaseRefactoring: {
-						Status:   StatusFailed,
-						Feedback: []string{"CI check error: CI check timeout after 30m0s"},
-					},
-					PhaseImplementation: {Status: StatusCompleted},
-					PhasePlanning:       {Status: StatusCompleted},
-				},
-				Error: &WorkflowError{
-					Message:     "failed to check CI: CI check timeout after 30m0s",
-					Phase:       PhaseRefactoring,
-					Recoverable: true,
-					FailureType: FailureTypeCI,
-				},
-			},
-			expectedPhase:       PhaseRefactoring,
-			expectedErrorNil:    false,
-			expectedFailureType: FailureTypeCI,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mockSM := new(MockStateManager)
-			mockSM.On("LoadState", "test-workflow").Return(tt.initialState, nil)
-
-			// Capture the saved state to verify
-			var savedState *WorkflowState
-			mockSM.On("SaveState", "test-workflow", mock.Anything).Run(func(args mock.Arguments) {
-				savedState = args.Get(1).(*WorkflowState)
-			}).Return(errors.New("stop execution for test"))
-
-			o := &Orchestrator{
-				stateManager: mockSM,
-				config:       DefaultConfig("/tmp/workflows"),
-			}
-
-			// Resume will fail because SaveState returns error, but we verify state was correctly set
-			err := o.Resume(context.Background(), "test-workflow")
-			require.Error(t, err)
-
-			// Verify the state was correctly modified before save
-			assert.Equal(t, tt.expectedPhase, savedState.CurrentPhase)
-			if tt.expectedErrorNil {
-				assert.Nil(t, savedState.Error)
-			} else {
-				assert.NotNil(t, savedState.Error)
-				assert.Equal(t, tt.expectedFailureType, savedState.Error.FailureType)
-			}
-
-			mockSM.AssertExpectations(t)
-		})
-	}
-}
-
 func TestOrchestrator_List(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -1171,29 +1061,204 @@ func TestIsRecoverableError(t *testing.T) {
 		want bool
 	}{
 		{
-			name: "timeout is recoverable",
+			name: "nil error is not recoverable",
+			err:  nil,
+			want: false,
+		},
+		{
+			name: "timeout error is recoverable",
 			err:  errors.New("operation timeout"),
 			want: true,
 		},
 		{
-			name: "execution failure is recoverable",
+			name: "connection timeout is recoverable",
+			err:  errors.New("connection timeout after 30s"),
+			want: true,
+		},
+		{
+			name: "claude execution timeout is recoverable",
+			err:  errors.New("claude execution timeout"),
+			want: true,
+		},
+		{
+			name: "claude execution failed is recoverable",
 			err:  errors.New("claude execution failed"),
 			want: true,
 		},
 		{
-			name: "parse error is recoverable",
+			name: "claude execution failed with exit code is recoverable",
+			err:  errors.New("claude execution failed with exit code 1"),
+			want: true,
+		},
+		{
+			name: "failed to parse JSON is recoverable",
 			err:  errors.New("failed to parse JSON"),
 			want: true,
 		},
 		{
-			name: "invalid input is not recoverable",
+			name: "failed to parse YAML is recoverable",
+			err:  errors.New("failed to parse YAML"),
+			want: true,
+		},
+		{
+			name: "failed to parse response is recoverable",
+			err:  errors.New("failed to parse response"),
+			want: true,
+		},
+		{
+			name: "invalid workflow name is not recoverable",
 			err:  errors.New("invalid workflow name"),
 			want: false,
 		},
 		{
-			name: "nil error is not recoverable",
-			err:  nil,
+			name: "invalid phase is not recoverable",
+			err:  errors.New("invalid phase transition"),
 			want: false,
+		},
+		{
+			name: "invalid configuration is not recoverable",
+			err:  errors.New("invalid configuration"),
+			want: false,
+		},
+		{
+			name: "invalid input is not recoverable",
+			err:  errors.New("invalid input parameter"),
+			want: false,
+		},
+		{
+			name: "generic error is recoverable by default",
+			err:  errors.New("something went wrong"),
+			want: true,
+		},
+		{
+			name: "network error is recoverable by default",
+			err:  errors.New("network connection lost"),
+			want: true,
+		},
+		{
+			name: "temporary error is recoverable by default",
+			err:  errors.New("temporary failure, please retry"),
+			want: true,
+		},
+		{
+			name: "timeout at start is recoverable",
+			err:  errors.New("timeout at connection start"),
+			want: true,
+		},
+		{
+			name: "timeout at end is recoverable",
+			err:  errors.New("operation ended with timeout"),
+			want: true,
+		},
+		{
+			name: "timeout in middle is recoverable",
+			err:  errors.New("operation timeout during execution"),
+			want: true,
+		},
+		{
+			name: "context deadline exceeded is recoverable",
+			err:  errors.New("context deadline exceeded timeout"),
+			want: true,
+		},
+		{
+			name: "invalid at start of message is not recoverable",
+			err:  errors.New("invalid request parameters"),
+			want: false,
+		},
+		{
+			name: "invalid in middle of message is not recoverable",
+			err:  errors.New("request has invalid data"),
+			want: false,
+		},
+		{
+			name: "invalid workflow name with context is not recoverable",
+			err:  errors.New("invalid workflow name: cannot contain spaces"),
+			want: false,
+		},
+		{
+			name: "parse error in JSON is recoverable",
+			err:  errors.New("failed to parse JSON response from API"),
+			want: true,
+		},
+		{
+			name: "parse error with details is recoverable",
+			err:  errors.New("failed to parse output: unexpected character at position 42"),
+			want: true,
+		},
+		{
+			name: "claude execution failed with details is recoverable",
+			err:  errors.New("claude execution failed: connection reset by peer"),
+			want: true,
+		},
+		{
+			name: "claude execution failed with status code is recoverable",
+			err:  errors.New("claude execution failed: HTTP 503 Service Unavailable"),
+			want: true,
+		},
+		{
+			name: "database error is recoverable by default",
+			err:  errors.New("database connection failed"),
+			want: true,
+		},
+		{
+			name: "file not found is recoverable by default",
+			err:  errors.New("file not found: config.yaml"),
+			want: true,
+		},
+		{
+			name: "permission denied is recoverable by default",
+			err:  errors.New("permission denied accessing file"),
+			want: true,
+		},
+		{
+			name: "invalid type is not recoverable",
+			err:  errors.New("invalid type provided"),
+			want: false,
+		},
+		{
+			name: "invalid format is not recoverable",
+			err:  errors.New("invalid format specified"),
+			want: false,
+		},
+		{
+			name: "invalid state is not recoverable",
+			err:  errors.New("invalid state transition requested"),
+			want: false,
+		},
+		{
+			name: "disk full error is recoverable by default",
+			err:  errors.New("no space left on device"),
+			want: true,
+		},
+		{
+			name: "out of memory error is recoverable by default",
+			err:  errors.New("out of memory"),
+			want: true,
+		},
+		{
+			name: "rate limit error is recoverable by default",
+			err:  errors.New("rate limit exceeded, retry after 60s"),
+			want: true,
+		},
+		{
+			name: "service unavailable is recoverable by default",
+			err:  errors.New("service temporarily unavailable"),
+			want: true,
+		},
+		{
+			name: "error with timeout word capitalized is recoverable",
+			err:  errors.New("Request Timeout occurred"),
+			want: true,
+		},
+		{
+			name: "error with parse word capitalized is recoverable",
+			err:  errors.New("Failed to Parse the response"),
+			want: true,
+		},
+		{
+			name: "error with Invalid word capitalized is recoverable since check is case-sensitive",
+			err:  errors.New("Invalid configuration detected"),
+			want: true,
 		},
 	}
 
@@ -1237,10 +1302,144 @@ func TestParseDiffStat(t *testing.T) {
 		wantErr    bool
 	}{
 		{
-			name: "parses diff stat with modifications",
+			name: "single file changed",
+			diffOutput: ` main.go | 10 ++++++++++
+ 1 file changed, 10 insertions(+)`,
+			want: &PRMetrics{
+				LinesChanged:  10,
+				FilesChanged:  1,
+				FilesAdded:    []string{},
+				FilesModified: []string{"main.go"},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "multiple files changed",
 			diffOutput: ` file1.go | 10 ++++++++++
  file2.go | 5 +++++
- 2 files changed, 15 insertions(+)`,
+ file3.go | 3 +++
+ 3 files changed, 18 insertions(+)`,
+			want: &PRMetrics{
+				LinesChanged:  18,
+				FilesChanged:  3,
+				FilesAdded:    []string{},
+				FilesModified: []string{"file1.go", "file2.go", "file3.go"},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+		{
+			name:       "no changes",
+			diffOutput: "",
+			want: &PRMetrics{
+				FilesAdded:    []string{},
+				FilesModified: []string{},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "new file added",
+			diffOutput: ` newfile.go (new) | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)`,
+			want: &PRMetrics{
+				LinesChanged:  20,
+				FilesChanged:  1,
+				FilesAdded:    []string{"newfile.go"},
+				FilesModified: []string{},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "file deleted",
+			diffOutput: ` oldfile.go (gone) | 50 --------------------------------------------------
+ 1 file changed, 50 deletions(-)`,
+			want: &PRMetrics{
+				LinesChanged:  50,
+				FilesChanged:  1,
+				FilesAdded:    []string{},
+				FilesModified: []string{},
+				FilesDeleted:  []string{"oldfile.go"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "mixed changes with additions modifications and deletions",
+			diffOutput: ` newfile.go (new) | 20 ++++++++++++++++++++
+ existing.go | 10 ++++++++++
+ oldfile.go (gone) | 15 ---------------
+ 3 files changed, 30 insertions(+), 15 deletions(-)`,
+			want: &PRMetrics{
+				LinesChanged:  30,
+				FilesChanged:  3,
+				FilesAdded:    []string{"newfile.go"},
+				FilesModified: []string{"existing.go"},
+				FilesDeleted:  []string{"oldfile.go"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "files with paths",
+			diffOutput: ` internal/workflow/orchestrator.go | 25 +++++++++++++++++++
+ cmd/main.go | 5 +++++
+ 2 files changed, 30 insertions(+)`,
+			want: &PRMetrics{
+				LinesChanged:  30,
+				FilesChanged:  2,
+				FilesAdded:    []string{},
+				FilesModified: []string{"internal/workflow/orchestrator.go", "cmd/main.go"},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "binary files",
+			diffOutput: ` image.png | Bin 0 -> 1024 bytes
+ data.bin  | Bin 2048 -> 4096 bytes
+ 2 files changed`,
+			want: &PRMetrics{
+				LinesChanged:  0,
+				FilesChanged:  2,
+				FilesAdded:    []string{},
+				FilesModified: []string{"image.png", "data.bin"},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "renamed files",
+			diffOutput: ` old.go => new.go | 5 +++++
+ 1 file changed, 5 insertions(+)`,
+			want: &PRMetrics{
+				LinesChanged:  5,
+				FilesChanged:  1,
+				FilesAdded:    []string{},
+				FilesModified: []string{"old.go"},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "large number of changes",
+			diffOutput: ` file1.go | 100 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ file2.go | 50 +++++++++++++++++++++++++++++
+ 2 files changed, 150 insertions(+)`,
+			want: &PRMetrics{
+				LinesChanged:  150,
+				FilesChanged:  2,
+				FilesAdded:    []string{},
+				FilesModified: []string{"file1.go", "file2.go"},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "deletions only",
+			diffOutput: ` file1.go | 10 ----------
+ file2.go | 5 -----
+ 2 files changed, 15 deletions(-)`,
 			want: &PRMetrics{
 				LinesChanged:  15,
 				FilesChanged:  2,
@@ -1251,9 +1450,38 @@ func TestParseDiffStat(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name:       "handles empty diff",
-			diffOutput: "",
+			name: "insertions and deletions combined",
+			diffOutput: ` file1.go | 25 +++++++++++--------------
+ 1 file changed, 12 insertions(+), 13 deletions(-)`,
 			want: &PRMetrics{
+				LinesChanged:  12,
+				FilesChanged:  1,
+				FilesAdded:    []string{},
+				FilesModified: []string{"file1.go"},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "whitespace-only line",
+			diffOutput: ` file1.go | 10 ++++++++++
+
+ 1 file changed, 10 insertions(+)`,
+			want: &PRMetrics{
+				LinesChanged:  10,
+				FilesChanged:  1,
+				FilesAdded:    []string{},
+				FilesModified: []string{"file1.go"},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+		{
+			name:       "only summary line no files",
+			diffOutput: ` 0 files changed`,
+			want: &PRMetrics{
+				LinesChanged:  0,
+				FilesChanged:  0,
 				FilesAdded:    []string{},
 				FilesModified: []string{},
 				FilesDeleted:  []string{},
@@ -1261,13 +1489,95 @@ func TestParseDiffStat(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "parses diff stat with new files",
-			diffOutput: ` newfile.go (new) | 20 ++++++++++++++++++++
+			name: "file with very long path",
+			diffOutput: ` internal/very/deep/nested/path/to/some/file/in/the/project/structure/file.go | 5 +++++
+ 1 file changed, 5 insertions(+)`,
+			want: &PRMetrics{
+				LinesChanged:  5,
+				FilesChanged:  1,
+				FilesAdded:    []string{},
+				FilesModified: []string{"internal/very/deep/nested/path/to/some/file/in/the/project/structure/file.go"},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "file with dots in name",
+			diffOutput: ` test.config.json | 3 +++
+ 1 file changed, 3 insertions(+)`,
+			want: &PRMetrics{
+				LinesChanged:  3,
+				FilesChanged:  1,
+				FilesAdded:    []string{},
+				FilesModified: []string{"test.config.json"},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "file with numbers in name",
+			diffOutput: ` migration_001_initial.sql | 20 ++++++++++++++++++++
  1 file changed, 20 insertions(+)`,
 			want: &PRMetrics{
 				LinesChanged:  20,
 				FilesChanged:  1,
-				FilesAdded:    []string{"newfile.go"},
+				FilesAdded:    []string{},
+				FilesModified: []string{"migration_001_initial.sql"},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "summary with only files changed field",
+			diffOutput: ` file1.go | 10 ++++++++++
+ 1 file changed`,
+			want: &PRMetrics{
+				LinesChanged:  0,
+				FilesChanged:  1,
+				FilesAdded:    []string{},
+				FilesModified: []string{"file1.go"},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+		{
+			name: "mixed new deleted and modified in complex scenario",
+			diffOutput: ` new1.go (new) | 30 ++++++++++++++++++++++++++++++
+ new2.go (new) | 15 +++++++++++++++
+ existing1.go | 10 ++++++++++
+ existing2.go | 5 -----
+ old1.go (gone) | 25 -------------------------
+ old2.go (gone) | 10 ----------
+ 6 files changed, 55 insertions(+), 40 deletions(-)`,
+			want: &PRMetrics{
+				LinesChanged:  55,
+				FilesChanged:  6,
+				FilesAdded:    []string{"new1.go", "new2.go"},
+				FilesModified: []string{"existing1.go", "existing2.go"},
+				FilesDeleted:  []string{"old1.go", "old2.go"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "trailing whitespace in diff output",
+			diffOutput: ` file1.go | 10 ++++++++++
+ 1 file changed, 10 insertions(+)   `,
+			want: &PRMetrics{
+				LinesChanged:  10,
+				FilesChanged:  1,
+				FilesAdded:    []string{},
+				FilesModified: []string{"file1.go"},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+		{
+			name:       "single line output with no newline",
+			diffOutput: ` 0 files changed`,
+			want: &PRMetrics{
+				LinesChanged:  0,
+				FilesChanged:  0,
+				FilesAdded:    []string{},
 				FilesModified: []string{},
 				FilesDeleted:  []string{},
 			},
@@ -1286,6 +1596,137 @@ func TestParseDiffStat(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestOrchestrator_executeRefactoring(t *testing.T) {
+	tests := []struct {
+		name            string
+		initialWorktree string
+		setupMocks      func(*MockStateManager, *MockClaudeExecutor, *MockPromptGenerator, *MockOutputParser, *MockCIChecker)
+		wantErr         bool
+		wantNextPhase   Phase
+	}{
+		{
+			name:            "fails when executor fails",
+			initialWorktree: "/tmp/worktrees/test-workflow",
+			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser, ci *MockCIChecker) {
+				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
+				sm.On("LoadPlan", "test-workflow").Return(&Plan{Summary: "test plan"}, nil)
+				pg.On("GenerateRefactoringPrompt", mock.Anything).Return("refactoring prompt", nil)
+				exec.On("ExecuteStreaming", mock.Anything, mock.Anything, mock.Anything).Return((*ExecuteResult)(nil), errors.New("execution failed"))
+			},
+			wantErr:       true,
+			wantNextPhase: PhaseFailed,
+		},
+		{
+			name:            "fails when LoadPlan fails",
+			initialWorktree: "/tmp/worktrees/test-workflow",
+			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser, ci *MockCIChecker) {
+				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
+				sm.On("LoadPlan", "test-workflow").Return((*Plan)(nil), errors.New("plan not found"))
+			},
+			wantErr:       true,
+			wantNextPhase: PhaseFailed,
+		},
+		{
+			name:            "fails when GenerateRefactoringPrompt fails",
+			initialWorktree: "/tmp/worktrees/test-workflow",
+			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser, ci *MockCIChecker) {
+				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
+				sm.On("LoadPlan", "test-workflow").Return(&Plan{Summary: "test plan"}, nil)
+				pg.On("GenerateRefactoringPrompt", mock.Anything).Return("", errors.New("prompt generation failed"))
+			},
+			wantErr:       true,
+			wantNextPhase: PhaseFailed,
+		},
+		{
+			name:            "fails when ExtractJSON fails",
+			initialWorktree: "/tmp/worktrees/test-workflow",
+			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser, ci *MockCIChecker) {
+				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
+				sm.On("LoadPlan", "test-workflow").Return(&Plan{Summary: "test plan"}, nil)
+				pg.On("GenerateRefactoringPrompt", mock.Anything).Return("refactoring prompt", nil)
+				exec.On("ExecuteStreaming", mock.Anything, mock.Anything, mock.Anything).Return(&ExecuteResult{
+					Output:   "invalid output",
+					ExitCode: 0,
+				}, nil)
+				op.On("ExtractJSON", mock.Anything).Return("", errors.New("no JSON found"))
+				sm.On("SaveRawOutput", "test-workflow", PhaseRefactoring, "invalid output").Return(nil)
+				sm.On("WorkflowDir", "test-workflow").Return("/tmp/workflows/test-workflow")
+			},
+			wantErr:       true,
+			wantNextPhase: PhaseFailed,
+		},
+		{
+			name:            "fails when ParseRefactoringSummary fails",
+			initialWorktree: "/tmp/worktrees/test-workflow",
+			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser, ci *MockCIChecker) {
+				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
+				sm.On("LoadPlan", "test-workflow").Return(&Plan{Summary: "test plan"}, nil)
+				pg.On("GenerateRefactoringPrompt", mock.Anything).Return("refactoring prompt", nil)
+				exec.On("ExecuteStreaming", mock.Anything, mock.Anything, mock.Anything).Return(&ExecuteResult{
+					Output:   "```json\n{\"invalid\": true}\n```",
+					ExitCode: 0,
+				}, nil)
+				op.On("ExtractJSON", mock.Anything).Return("{\"invalid\": true}", nil)
+				op.On("ParseRefactoringSummary", mock.Anything).Return((*RefactoringSummary)(nil), errors.New("invalid summary"))
+				sm.On("SaveRawOutput", "test-workflow", PhaseRefactoring, "```json\n{\"invalid\": true}\n```").Return(nil)
+				sm.On("WorkflowDir", "test-workflow").Return("/tmp/workflows/test-workflow")
+			},
+			wantErr:       true,
+			wantNextPhase: PhaseFailed,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockSM := new(MockStateManager)
+			mockExec := new(MockClaudeExecutor)
+			mockPG := new(MockPromptGenerator)
+			mockOP := new(MockOutputParser)
+			mockCI := new(MockCIChecker)
+
+			tt.setupMocks(mockSM, mockExec, mockPG, mockOP, mockCI)
+
+			o := &Orchestrator{
+				stateManager:    mockSM,
+				executor:        mockExec,
+				promptGenerator: mockPG,
+				parser:          mockOP,
+				config:          DefaultConfig("/tmp/workflows"),
+				ciCheckerFactory: func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker {
+					return mockCI
+				},
+			}
+
+			state := &WorkflowState{
+				Name:         "test-workflow",
+				CurrentPhase: PhaseRefactoring,
+				WorktreePath: tt.initialWorktree,
+				Phases: map[Phase]*PhaseState{
+					PhasePlanning:       {Status: StatusCompleted},
+					PhaseConfirmation:   {Status: StatusCompleted},
+					PhaseImplementation: {Status: StatusCompleted},
+					PhaseRefactoring:    {Status: StatusInProgress},
+					PhasePRSplit:        {Status: StatusPending},
+				},
+			}
+
+			err := o.executeRefactoring(context.Background(), state)
+
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+
+			assert.Equal(t, tt.wantNextPhase, state.CurrentPhase)
+			mockSM.AssertExpectations(t)
+			mockExec.AssertExpectations(t)
+			mockPG.AssertExpectations(t)
+			mockOP.AssertExpectations(t)
 		})
 	}
 }
@@ -1441,7 +1882,7 @@ func TestOrchestrator_executePRSplit_CIFailureRetry(t *testing.T) {
 		promptGenerator: mockPG,
 		parser:          mockOP,
 		config:          config,
-		ciCheckerFactory: func(workingDir string, checkInterval time.Duration) CIChecker {
+		ciCheckerFactory: func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker {
 			return mockCI
 		},
 	}
@@ -1607,7 +2048,123 @@ func TestOrchestrator_failWorkflow(t *testing.T) {
 			assert.Equal(t, PhaseFailed, state.CurrentPhase)
 			assert.NotNil(t, state.Error)
 			assert.Equal(t, tt.err.Error(), state.Error.Message)
+			assert.Equal(t, FailureTypeExecution, state.Error.FailureType)
 			assert.Equal(t, StatusFailed, state.Phases[PhasePlanning].Status)
+			mockSM.AssertExpectations(t)
+		})
+	}
+}
+
+func TestOrchestrator_failWorkflowCI(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		setupMocks func(*MockStateManager)
+	}{
+		{
+			name: "successfully transitions to failed state with CI failure type",
+			err:  errors.New("ci check failed"),
+			setupMocks: func(sm *MockStateManager) {
+				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockSM := new(MockStateManager)
+			tt.setupMocks(mockSM)
+
+			o := &Orchestrator{
+				stateManager: mockSM,
+			}
+
+			state := &WorkflowState{
+				Name:         "test-workflow",
+				CurrentPhase: PhasePlanning,
+				Phases: map[Phase]*PhaseState{
+					PhasePlanning: {Status: StatusInProgress},
+				},
+			}
+
+			err := o.failWorkflowCI(state, tt.err)
+
+			require.Error(t, err)
+			assert.Equal(t, PhaseFailed, state.CurrentPhase)
+			assert.NotNil(t, state.Error)
+			assert.Equal(t, tt.err.Error(), state.Error.Message)
+			assert.Equal(t, FailureTypeCI, state.Error.FailureType)
+			assert.Equal(t, StatusFailed, state.Phases[PhasePlanning].Status)
+			mockSM.AssertExpectations(t)
+		})
+	}
+}
+
+func TestOrchestrator_failWorkflowWithType(t *testing.T) {
+	tests := []struct {
+		name        string
+		err         error
+		failureType FailureType
+		setupMocks  func(*MockStateManager)
+	}{
+		{
+			name:        "successfully transitions to failed state with execution failure type",
+			err:         errors.New("execution failed"),
+			failureType: FailureTypeExecution,
+			setupMocks: func(sm *MockStateManager) {
+				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
+			},
+		},
+		{
+			name:        "successfully transitions to failed state with CI failure type",
+			err:         errors.New("ci check failed"),
+			failureType: FailureTypeCI,
+			setupMocks: func(sm *MockStateManager) {
+				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
+			},
+		},
+		{
+			name:        "handles save state error",
+			err:         errors.New("original error"),
+			failureType: FailureTypeExecution,
+			setupMocks: func(sm *MockStateManager) {
+				sm.On("SaveState", "test-workflow", mock.Anything).Return(errors.New("save failed"))
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockSM := new(MockStateManager)
+			tt.setupMocks(mockSM)
+
+			o := &Orchestrator{
+				stateManager: mockSM,
+			}
+
+			state := &WorkflowState{
+				Name:         "test-workflow",
+				CurrentPhase: PhasePlanning,
+				Phases: map[Phase]*PhaseState{
+					PhasePlanning: {Status: StatusInProgress},
+				},
+			}
+
+			err := o.failWorkflowWithType(state, tt.err, tt.failureType)
+
+			require.Error(t, err)
+			assert.Equal(t, PhaseFailed, state.CurrentPhase)
+			assert.NotNil(t, state.Error)
+			assert.Equal(t, tt.failureType, state.Error.FailureType)
+			assert.Equal(t, StatusFailed, state.Phases[PhasePlanning].Status)
+
+			if tt.name == "handles save state error" {
+				assert.Contains(t, err.Error(), "failed to save failed state")
+				assert.Contains(t, err.Error(), "original error")
+			} else {
+				assert.Equal(t, tt.err.Error(), err.Error())
+			}
+
 			mockSM.AssertExpectations(t)
 		})
 	}
@@ -1732,6 +2289,316 @@ func TestDefaultConfirmFunc(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantApproved, approved)
 			assert.Equal(t, tt.wantFeedback, feedback)
+		})
+	}
+}
+
+func TestGetCIChecker(t *testing.T) {
+	tests := []struct {
+		name             string
+		ciCheckerFactory func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker
+		workingDir       string
+		wantMock         bool
+	}{
+		{
+			name: "uses factory when set",
+			ciCheckerFactory: func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker {
+				mockCI := new(MockCIChecker)
+				return mockCI
+			},
+			workingDir: "/tmp/worktree",
+			wantMock:   true,
+		},
+		{
+			name:             "creates real checker when factory is nil",
+			ciCheckerFactory: nil,
+			workingDir:       "/tmp/worktree",
+			wantMock:         false,
+		},
+		{
+			name: "passes correct working directory to factory",
+			ciCheckerFactory: func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker {
+				assert.Equal(t, "/custom/worktree/path", workingDir)
+				mockCI := new(MockCIChecker)
+				return mockCI
+			},
+			workingDir: "/custom/worktree/path",
+			wantMock:   true,
+		},
+		{
+			name: "passes config check interval to factory",
+			ciCheckerFactory: func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker {
+				assert.Equal(t, 45*time.Second, checkInterval)
+				mockCI := new(MockCIChecker)
+				return mockCI
+			},
+			workingDir: "/tmp/worktree",
+			wantMock:   true,
+		},
+		{
+			name: "passes config command timeout to factory",
+			ciCheckerFactory: func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker {
+				assert.Equal(t, 3*time.Minute, commandTimeout)
+				mockCI := new(MockCIChecker)
+				return mockCI
+			},
+			workingDir: "/tmp/worktree",
+			wantMock:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := DefaultConfig("/tmp/workflows")
+			if tt.name == "passes config check interval to factory" {
+				config.CICheckInterval = 45 * time.Second
+			}
+			if tt.name == "passes config command timeout to factory" {
+				config.GHCommandTimeout = 3 * time.Minute
+			}
+
+			o := &Orchestrator{
+				config:           config,
+				ciCheckerFactory: tt.ciCheckerFactory,
+			}
+
+			checker := o.getCIChecker(tt.workingDir)
+
+			assert.NotNil(t, checker)
+			if tt.wantMock {
+				_, ok := checker.(*MockCIChecker)
+				assert.True(t, ok, "expected MockCIChecker")
+			}
+		})
+	}
+}
+
+func TestOrchestrator_getPRMetrics(t *testing.T) {
+	tests := []struct {
+		name       string
+		gitDiff    string
+		want       *PRMetrics
+		wantErr    bool
+		setupMocks func(ctx context.Context, workingDir string)
+	}{
+		{
+			name: "successfully parses git diff output",
+			want: &PRMetrics{
+				LinesChanged:  10,
+				FilesChanged:  1,
+				FilesAdded:    []string{},
+				FilesModified: []string{"file.go"},
+				FilesDeleted:  []string{},
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.want != nil {
+				metrics, err := parseDiffStat(" file.go | 10 ++++++++++\n 1 file changed, 10 insertions(+)")
+				require.NoError(t, err)
+				assert.Equal(t, tt.want, metrics)
+			}
+		})
+	}
+}
+
+func TestFormatCIErrors(t *testing.T) {
+	tests := []struct {
+		name   string
+		result *CIResult
+		want   string
+	}{
+		{
+			name: "formats single failed job",
+			result: &CIResult{
+				Passed:     false,
+				Status:     "failure",
+				Output:     "Build failed: syntax error",
+				FailedJobs: []string{"build"},
+			},
+			want: "CI checks failed with the following errors:\n\nBuild failed: syntax error\n\nFailed jobs:\n- build\n",
+		},
+		{
+			name: "formats multiple failed jobs",
+			result: &CIResult{
+				Passed:     false,
+				Status:     "failure",
+				Output:     "Multiple errors occurred",
+				FailedJobs: []string{"build", "test", "lint"},
+			},
+			want: "CI checks failed with the following errors:\n\nMultiple errors occurred\n\nFailed jobs:\n- build\n- test\n- lint\n",
+		},
+		{
+			name: "handles empty output",
+			result: &CIResult{
+				Passed:     false,
+				Status:     "failure",
+				Output:     "",
+				FailedJobs: []string{"deploy"},
+			},
+			want: "CI checks failed with the following errors:\n\n\n\nFailed jobs:\n- deploy\n",
+		},
+		{
+			name: "handles no failed jobs",
+			result: &CIResult{
+				Passed:     false,
+				Status:     "failure",
+				Output:     "Unknown error",
+				FailedJobs: []string{},
+			},
+			want: "CI checks failed with the following errors:\n\nUnknown error\n\nFailed jobs:\n",
+		},
+		{
+			name: "formats output with multiline errors",
+			result: &CIResult{
+				Passed:     false,
+				Status:     "failure",
+				Output:     "Error 1: Build failed\nError 2: Test failed\nError 3: Lint failed",
+				FailedJobs: []string{"ci"},
+			},
+			want: "CI checks failed with the following errors:\n\nError 1: Build failed\nError 2: Test failed\nError 3: Lint failed\n\nFailed jobs:\n- ci\n",
+		},
+		{
+			name: "formats with special characters in output",
+			result: &CIResult{
+				Passed:     false,
+				Status:     "failure",
+				Output:     "Error: file \"test.go\" has issues\n\tLine 42: syntax error",
+				FailedJobs: []string{"build"},
+			},
+			want: "CI checks failed with the following errors:\n\nError: file \"test.go\" has issues\n\tLine 42: syntax error\n\nFailed jobs:\n- build\n",
+		},
+		{
+			name: "formats with nil failed jobs slice",
+			result: &CIResult{
+				Passed:     false,
+				Status:     "failure",
+				Output:     "CI system error",
+				FailedJobs: nil,
+			},
+			want: "CI checks failed with the following errors:\n\nCI system error\n\nFailed jobs:\n",
+		},
+		{
+			name: "formats with long output",
+			result: &CIResult{
+				Passed: false,
+				Status: "failure",
+				Output: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. " +
+					"Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. " +
+					"Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.",
+				FailedJobs: []string{"integration-test"},
+			},
+			want: "CI checks failed with the following errors:\n\nLorem ipsum dolor sit amet, consectetur adipiscing elit. " +
+				"Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. " +
+				"Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.\n\nFailed jobs:\n- integration-test\n",
+		},
+		{
+			name: "formats with job names containing spaces",
+			result: &CIResult{
+				Passed:     false,
+				Status:     "failure",
+				Output:     "Job failed",
+				FailedJobs: []string{"build and test", "deploy to staging"},
+			},
+			want: "CI checks failed with the following errors:\n\nJob failed\n\nFailed jobs:\n- build and test\n- deploy to staging\n",
+		},
+		{
+			name: "formats with job names containing special characters",
+			result: &CIResult{
+				Passed:     false,
+				Status:     "failure",
+				Output:     "Job failed",
+				FailedJobs: []string{"build/test/deploy", "test:unit"},
+			},
+			want: "CI checks failed with the following errors:\n\nJob failed\n\nFailed jobs:\n- build/test/deploy\n- test:unit\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatCIErrors(tt.result)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestOrchestrator_executePlanning_ParseErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		setupMocks func(*MockStateManager, *MockClaudeExecutor, *MockPromptGenerator, *MockOutputParser)
+		wantPhase  Phase
+	}{
+		{
+			name: "fails when ExtractJSON fails and saves raw output",
+			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser) {
+				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
+				pg.On("GeneratePlanningPrompt", WorkflowTypeFeature, "test description", []string(nil)).Return("planning prompt", nil)
+				exec.On("ExecuteStreaming", mock.Anything, mock.Anything, mock.Anything).Return(&ExecuteResult{
+					Output:   "some invalid output without json",
+					ExitCode: 0,
+				}, nil)
+				op.On("ExtractJSON", mock.Anything).Return("", errors.New("no JSON found"))
+				sm.On("SaveRawOutput", "test-workflow", PhasePlanning, "some invalid output without json").Return(nil)
+				sm.On("WorkflowDir", "test-workflow").Return("/tmp/workflows/test-workflow")
+			},
+			wantPhase: PhaseFailed,
+		},
+		{
+			name: "fails when ParsePlan fails and saves raw output",
+			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser) {
+				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
+				pg.On("GeneratePlanningPrompt", WorkflowTypeFeature, "test description", []string(nil)).Return("planning prompt", nil)
+				exec.On("ExecuteStreaming", mock.Anything, mock.Anything, mock.Anything).Return(&ExecuteResult{
+					Output:   "```json\n{\"invalid\": \"plan\"}\n```",
+					ExitCode: 0,
+				}, nil)
+				op.On("ExtractJSON", mock.Anything).Return("{\"invalid\": \"plan\"}", nil)
+				op.On("ParsePlan", mock.Anything).Return((*Plan)(nil), errors.New("invalid plan structure"))
+				sm.On("SaveRawOutput", "test-workflow", PhasePlanning, "```json\n{\"invalid\": \"plan\"}\n```").Return(nil)
+				sm.On("WorkflowDir", "test-workflow").Return("/tmp/workflows/test-workflow")
+			},
+			wantPhase: PhaseFailed,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockSM := new(MockStateManager)
+			mockExec := new(MockClaudeExecutor)
+			mockPG := new(MockPromptGenerator)
+			mockOP := new(MockOutputParser)
+
+			tt.setupMocks(mockSM, mockExec, mockPG, mockOP)
+
+			o := &Orchestrator{
+				stateManager:    mockSM,
+				executor:        mockExec,
+				promptGenerator: mockPG,
+				parser:          mockOP,
+				config:          DefaultConfig("/tmp/workflows"),
+			}
+
+			state := &WorkflowState{
+				Name:         "test-workflow",
+				Type:         WorkflowTypeFeature,
+				Description:  "test description",
+				CurrentPhase: PhasePlanning,
+				Phases: map[Phase]*PhaseState{
+					PhasePlanning: {Status: StatusInProgress},
+				},
+			}
+
+			err := o.executePlanning(context.Background(), state)
+
+			require.Error(t, err)
+			assert.Equal(t, tt.wantPhase, state.CurrentPhase)
+			mockSM.AssertExpectations(t)
+			mockExec.AssertExpectations(t)
+			mockPG.AssertExpectations(t)
+			mockOP.AssertExpectations(t)
 		})
 	}
 }

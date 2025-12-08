@@ -2,8 +2,14 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/michael-freling/claude-code-config/internal/workflow"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -381,4 +387,1406 @@ func TestCommandFlags(t *testing.T) {
 			assert.Equal(t, tt.defaultValue, flag.DefValue)
 		})
 	}
+}
+
+func TestStartCmd_TypeFlagRequired(t *testing.T) {
+	cmd := newStartCmd()
+	flag := cmd.Flags().Lookup("type")
+	require.NotNil(t, flag)
+
+	annotations := flag.Annotations
+	_, required := annotations[cobra.BashCompOneRequiredFlag]
+	assert.True(t, required, "type flag should be marked as required")
+}
+
+func TestNewStartCmd_Structure(t *testing.T) {
+	cmd := newStartCmd()
+
+	assert.Equal(t, "start <name> <description>", cmd.Use)
+	assert.NotEmpty(t, cmd.Short)
+	assert.NotEmpty(t, cmd.Long)
+	assert.NotNil(t, cmd.RunE)
+
+	flag := cmd.Flags().Lookup("type")
+	require.NotNil(t, flag)
+	assert.Equal(t, "string", flag.Value.Type())
+}
+
+func TestNewListCmd_Structure(t *testing.T) {
+	cmd := newListCmd()
+
+	assert.Equal(t, "list", cmd.Use)
+	assert.NotEmpty(t, cmd.Short)
+	assert.NotEmpty(t, cmd.Long)
+	assert.NotNil(t, cmd.RunE)
+	assert.NotNil(t, cmd.Args)
+}
+
+func TestNewStatusCmd_Structure(t *testing.T) {
+	cmd := newStatusCmd()
+
+	assert.Equal(t, "status <name>", cmd.Use)
+	assert.NotEmpty(t, cmd.Short)
+	assert.NotEmpty(t, cmd.Long)
+	assert.NotNil(t, cmd.RunE)
+	assert.NotNil(t, cmd.Args)
+}
+
+func TestNewResumeCmd_Structure(t *testing.T) {
+	cmd := newResumeCmd()
+
+	assert.Equal(t, "resume <name>", cmd.Use)
+	assert.NotEmpty(t, cmd.Short)
+	assert.NotEmpty(t, cmd.Long)
+	assert.NotNil(t, cmd.RunE)
+	assert.NotNil(t, cmd.Args)
+}
+
+func TestNewDeleteCmd_Structure(t *testing.T) {
+	cmd := newDeleteCmd()
+
+	assert.Equal(t, "delete <name>", cmd.Use)
+	assert.NotEmpty(t, cmd.Short)
+	assert.NotEmpty(t, cmd.Long)
+	assert.NotNil(t, cmd.RunE)
+	assert.NotNil(t, cmd.Args)
+
+	flag := cmd.Flags().Lookup("force")
+	require.NotNil(t, flag)
+	assert.Equal(t, "bool", flag.Value.Type())
+	assert.Equal(t, "false", flag.DefValue)
+}
+
+func TestNewCleanCmd_Structure(t *testing.T) {
+	cmd := newCleanCmd()
+
+	assert.Equal(t, "clean", cmd.Use)
+	assert.NotEmpty(t, cmd.Short)
+	assert.NotEmpty(t, cmd.Long)
+	assert.NotNil(t, cmd.RunE)
+	assert.NotNil(t, cmd.Args)
+
+	flag := cmd.Flags().Lookup("force")
+	require.NotNil(t, flag)
+	assert.Equal(t, "bool", flag.Value.Type())
+	assert.Equal(t, "false", flag.DefValue)
+}
+
+func TestRootCmd_HasAllSubcommands(t *testing.T) {
+	cmd := newRootCmd()
+
+	subcommands := []string{"start", "list", "status", "resume", "delete", "clean"}
+	for _, name := range subcommands {
+		found := false
+		for _, c := range cmd.Commands() {
+			if c.Name() == name {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "root command should have %s subcommand", name)
+	}
+}
+
+func TestCommandValidation(t *testing.T) {
+	tests := []struct {
+		name        string
+		cmdFunc     func() *cobra.Command
+		validArgs   []string
+		invalidArgs []string
+	}{
+		{
+			name:        "start command validation",
+			cmdFunc:     newStartCmd,
+			validArgs:   []string{"name", "description"},
+			invalidArgs: []string{"only-one"},
+		},
+		{
+			name:        "status command validation",
+			cmdFunc:     newStatusCmd,
+			validArgs:   []string{"name"},
+			invalidArgs: []string{},
+		},
+		{
+			name:        "resume command validation",
+			cmdFunc:     newResumeCmd,
+			validArgs:   []string{"name"},
+			invalidArgs: []string{},
+		},
+		{
+			name:        "delete command validation",
+			cmdFunc:     newDeleteCmd,
+			validArgs:   []string{"name"},
+			invalidArgs: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := tt.cmdFunc()
+
+			err := cmd.Args(cmd, tt.validArgs)
+			assert.NoError(t, err, "valid args should not produce error")
+
+			err = cmd.Args(cmd, tt.invalidArgs)
+			assert.Error(t, err, "invalid args should produce error")
+		})
+	}
+}
+
+func TestCreateOrchestrator(t *testing.T) {
+	tests := []struct {
+		name                       string
+		baseDir                    string
+		maxLines                   int
+		maxFiles                   int
+		claudePath                 string
+		dangerouslySkipPermissions bool
+		timeoutPlanning            time.Duration
+		timeoutImplement           time.Duration
+		timeoutRefactoring         time.Duration
+		timeoutPRSplit             time.Duration
+	}{
+		{
+			name:                       "default values",
+			baseDir:                    ".claude/workflow",
+			maxLines:                   100,
+			maxFiles:                   10,
+			claudePath:                 "claude",
+			dangerouslySkipPermissions: false,
+			timeoutPlanning:            1 * time.Hour,
+			timeoutImplement:           6 * time.Hour,
+			timeoutRefactoring:         6 * time.Hour,
+			timeoutPRSplit:             1 * time.Hour,
+		},
+		{
+			name:                       "custom values",
+			baseDir:                    "/tmp/workflows",
+			maxLines:                   200,
+			maxFiles:                   20,
+			claudePath:                 "/usr/local/bin/claude",
+			dangerouslySkipPermissions: true,
+			timeoutPlanning:            2 * time.Hour,
+			timeoutImplement:           8 * time.Hour,
+			timeoutRefactoring:         8 * time.Hour,
+			timeoutPRSplit:             2 * time.Hour,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			baseDir = tt.baseDir
+			maxLines = tt.maxLines
+			maxFiles = tt.maxFiles
+			claudePath = tt.claudePath
+			dangerouslySkipPermissions = tt.dangerouslySkipPermissions
+			timeoutPlanning = tt.timeoutPlanning
+			timeoutImplement = tt.timeoutImplement
+			timeoutRefactoring = tt.timeoutRefactoring
+			timeoutPRSplit = tt.timeoutPRSplit
+
+			orchestrator, err := createOrchestrator()
+
+			require.NoError(t, err)
+			require.NotNil(t, orchestrator)
+		})
+	}
+}
+
+func TestStartCmd_WorkflowTypeValidation(t *testing.T) {
+	tests := []struct {
+		name         string
+		workflowType string
+		wantErr      bool
+		wantErrMsg   string
+	}{
+		{
+			name:         "valid feature type",
+			workflowType: "feature",
+			wantErr:      true,
+		},
+		{
+			name:         "valid fix type",
+			workflowType: "fix",
+			wantErr:      true,
+		},
+		{
+			name:         "invalid type",
+			workflowType: "invalid",
+			wantErr:      true,
+			wantErrMsg:   "invalid workflow type: invalid (must be 'feature' or 'fix')",
+		},
+		{
+			name:         "empty type",
+			workflowType: "",
+			wantErr:      true,
+			wantErrMsg:   "invalid workflow type:  (must be 'feature' or 'fix')",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := newStartCmd()
+
+			cmd.SetArgs([]string{"test-workflow", "test description", "--type", tt.workflowType})
+
+			buf := new(bytes.Buffer)
+			cmd.SetOut(buf)
+			cmd.SetErr(buf)
+
+			err := cmd.Execute()
+
+			require.Error(t, err)
+			if tt.wantErrMsg != "" {
+				assert.Contains(t, err.Error(), tt.wantErrMsg)
+			}
+		})
+	}
+}
+
+func TestStartCmd_MissingTypeFlag(t *testing.T) {
+	cmd := newStartCmd()
+
+	cmd.SetArgs([]string{"test-workflow", "test description"})
+
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+
+	err := cmd.Execute()
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "required flag(s)")
+}
+
+func TestDeleteCmd_ForceFlag(t *testing.T) {
+	cmd := newDeleteCmd()
+
+	forceFlag := cmd.Flags().Lookup("force")
+	require.NotNil(t, forceFlag)
+
+	assert.Equal(t, "bool", forceFlag.Value.Type())
+	assert.Equal(t, "false", forceFlag.DefValue)
+
+	err := forceFlag.Value.Set("true")
+	require.NoError(t, err)
+	assert.Equal(t, "true", forceFlag.Value.String())
+}
+
+func TestCleanCmd_ForceFlag(t *testing.T) {
+	cmd := newCleanCmd()
+
+	forceFlag := cmd.Flags().Lookup("force")
+	require.NotNil(t, forceFlag)
+
+	assert.Equal(t, "bool", forceFlag.Value.Type())
+	assert.Equal(t, "false", forceFlag.DefValue)
+
+	err := forceFlag.Value.Set("true")
+	require.NoError(t, err)
+	assert.Equal(t, "true", forceFlag.Value.String())
+}
+
+func TestPersistentFlagsInheritance(t *testing.T) {
+	rootCmd := newRootCmd()
+
+	subcommands := []string{"start", "list", "status", "resume", "delete", "clean"}
+
+	for _, name := range subcommands {
+		t.Run(name+" inherits persistent flags", func(t *testing.T) {
+			var cmd *cobra.Command
+			for _, c := range rootCmd.Commands() {
+				if c.Name() == name {
+					cmd = c
+					break
+				}
+			}
+			require.NotNil(t, cmd, "subcommand %s should exist", name)
+
+			persistentFlags := []string{
+				"base-dir",
+				"max-lines",
+				"max-files",
+				"claude-path",
+				"dangerously-skip-permissions",
+				"timeout-planning",
+				"timeout-implementation",
+				"timeout-refactoring",
+				"timeout-pr-split",
+			}
+
+			for _, flagName := range persistentFlags {
+				flag := cmd.InheritedFlags().Lookup(flagName)
+				assert.NotNil(t, flag, "subcommand %s should inherit flag %s", name, flagName)
+			}
+		})
+	}
+}
+
+func TestCommandStructureDetails(t *testing.T) {
+	tests := []struct {
+		name             string
+		cmdFunc          func() *cobra.Command
+		expectedUse      string
+		expectedShort    string
+		hasRunE          bool
+		hasArgs          bool
+		localFlags       []string
+		requiredFlags    []string
+		expectedArgsFunc func(*cobra.Command, []string) error
+	}{
+		{
+			name:             "start command",
+			cmdFunc:          newStartCmd,
+			expectedUse:      "start <name> <description>",
+			expectedShort:    "Start a new workflow",
+			hasRunE:          true,
+			hasArgs:          true,
+			localFlags:       []string{"type"},
+			requiredFlags:    []string{"type"},
+			expectedArgsFunc: cobra.ExactArgs(2),
+		},
+		{
+			name:             "list command",
+			cmdFunc:          newListCmd,
+			expectedUse:      "list",
+			expectedShort:    "List all workflows",
+			hasRunE:          true,
+			hasArgs:          true,
+			localFlags:       []string{},
+			requiredFlags:    []string{},
+			expectedArgsFunc: cobra.NoArgs,
+		},
+		{
+			name:             "status command",
+			cmdFunc:          newStatusCmd,
+			expectedUse:      "status <name>",
+			expectedShort:    "Show workflow status",
+			hasRunE:          true,
+			hasArgs:          true,
+			localFlags:       []string{},
+			requiredFlags:    []string{},
+			expectedArgsFunc: cobra.ExactArgs(1),
+		},
+		{
+			name:             "resume command",
+			cmdFunc:          newResumeCmd,
+			expectedUse:      "resume <name>",
+			expectedShort:    "Resume an interrupted workflow",
+			hasRunE:          true,
+			hasArgs:          true,
+			localFlags:       []string{},
+			requiredFlags:    []string{},
+			expectedArgsFunc: cobra.ExactArgs(1),
+		},
+		{
+			name:             "delete command",
+			cmdFunc:          newDeleteCmd,
+			expectedUse:      "delete <name>",
+			expectedShort:    "Delete a workflow",
+			hasRunE:          true,
+			hasArgs:          true,
+			localFlags:       []string{"force"},
+			requiredFlags:    []string{},
+			expectedArgsFunc: cobra.ExactArgs(1),
+		},
+		{
+			name:             "clean command",
+			cmdFunc:          newCleanCmd,
+			expectedUse:      "clean",
+			expectedShort:    "Delete all completed workflows",
+			hasRunE:          true,
+			hasArgs:          true,
+			localFlags:       []string{"force"},
+			requiredFlags:    []string{},
+			expectedArgsFunc: cobra.NoArgs,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := tt.cmdFunc()
+
+			assert.Equal(t, tt.expectedUse, cmd.Use)
+			assert.Equal(t, tt.expectedShort, cmd.Short)
+
+			if tt.hasRunE {
+				assert.NotNil(t, cmd.RunE, "command should have RunE function")
+			}
+
+			if tt.hasArgs {
+				assert.NotNil(t, cmd.Args, "command should have Args validation")
+			}
+
+			for _, flagName := range tt.localFlags {
+				flag := cmd.Flags().Lookup(flagName)
+				assert.NotNil(t, flag, "command should have flag %s", flagName)
+			}
+
+			for _, flagName := range tt.requiredFlags {
+				flag := cmd.Flags().Lookup(flagName)
+				require.NotNil(t, flag, "required flag %s should exist", flagName)
+				annotations := flag.Annotations
+				_, required := annotations[cobra.BashCompOneRequiredFlag]
+				assert.True(t, required, "flag %s should be marked as required", flagName)
+			}
+		})
+	}
+}
+
+func TestRootCmd_UsageText(t *testing.T) {
+	cmd := newRootCmd()
+
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+
+	err := cmd.Help()
+	require.NoError(t, err)
+
+	output := buf.String()
+	assert.Contains(t, output, "claude-workflow")
+	assert.Contains(t, output, "Available Commands:")
+	assert.Contains(t, output, "start")
+	assert.Contains(t, output, "list")
+	assert.Contains(t, output, "status")
+	assert.Contains(t, output, "resume")
+	assert.Contains(t, output, "delete")
+	assert.Contains(t, output, "clean")
+}
+
+func TestCommandLongDescriptions(t *testing.T) {
+	tests := []struct {
+		name     string
+		cmdFunc  func() *cobra.Command
+		contains string
+	}{
+		{
+			name:     "root command",
+			cmdFunc:  newRootCmd,
+			contains: "multi-phase development workflows",
+		},
+		{
+			name:     "start command",
+			cmdFunc:  newStartCmd,
+			contains: "Start a new workflow",
+		},
+		{
+			name:     "list command",
+			cmdFunc:  newListCmd,
+			contains: "List all workflows",
+		},
+		{
+			name:     "status command",
+			cmdFunc:  newStatusCmd,
+			contains: "detailed status",
+		},
+		{
+			name:     "resume command",
+			cmdFunc:  newResumeCmd,
+			contains: "Resume a workflow",
+		},
+		{
+			name:     "delete command",
+			cmdFunc:  newDeleteCmd,
+			contains: "Delete a workflow",
+		},
+		{
+			name:     "clean command",
+			cmdFunc:  newCleanCmd,
+			contains: "completed successfully",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := tt.cmdFunc()
+			assert.NotEmpty(t, cmd.Long)
+			assert.Contains(t, strings.ToLower(cmd.Long), strings.ToLower(tt.contains))
+		})
+	}
+}
+
+func TestPersistentFlagDefaults(t *testing.T) {
+	cmd := newRootCmd()
+
+	baseDir := cmd.PersistentFlags().Lookup("base-dir")
+	assert.Equal(t, ".claude/workflow", baseDir.DefValue)
+
+	maxLines := cmd.PersistentFlags().Lookup("max-lines")
+	assert.Equal(t, "100", maxLines.DefValue)
+
+	maxFiles := cmd.PersistentFlags().Lookup("max-files")
+	assert.Equal(t, "10", maxFiles.DefValue)
+
+	claudePath := cmd.PersistentFlags().Lookup("claude-path")
+	assert.Equal(t, "claude", claudePath.DefValue)
+
+	dangerouslySkipPermissions := cmd.PersistentFlags().Lookup("dangerously-skip-permissions")
+	assert.Equal(t, "false", dangerouslySkipPermissions.DefValue)
+
+	timeoutPlanning := cmd.PersistentFlags().Lookup("timeout-planning")
+	assert.Equal(t, "1h0m0s", timeoutPlanning.DefValue)
+
+	timeoutImplementation := cmd.PersistentFlags().Lookup("timeout-implementation")
+	assert.Equal(t, "6h0m0s", timeoutImplementation.DefValue)
+
+	timeoutRefactoring := cmd.PersistentFlags().Lookup("timeout-refactoring")
+	assert.Equal(t, "6h0m0s", timeoutRefactoring.DefValue)
+
+	timeoutPRSplit := cmd.PersistentFlags().Lookup("timeout-pr-split")
+	assert.Equal(t, "1h0m0s", timeoutPRSplit.DefValue)
+}
+
+func TestNewListCmd_DetailedStructure(t *testing.T) {
+	cmd := newListCmd()
+
+	assert.Equal(t, "list", cmd.Use)
+	assert.Equal(t, "List all workflows", cmd.Short)
+	assert.Contains(t, cmd.Long, "List all workflows")
+	assert.NotNil(t, cmd.RunE)
+	assert.NotNil(t, cmd.Args)
+
+	err := cmd.Args(cmd, []string{})
+	assert.NoError(t, err)
+
+	err = cmd.Args(cmd, []string{"extra"})
+	assert.Error(t, err)
+}
+
+func TestNewStatusCmd_Details(t *testing.T) {
+	cmd := newStatusCmd()
+
+	assert.Equal(t, "status <name>", cmd.Use)
+	assert.Equal(t, "Show workflow status", cmd.Short)
+	assert.Contains(t, cmd.Long, "detailed status")
+	assert.NotNil(t, cmd.RunE)
+
+	err := cmd.Args(cmd, []string{"workflow-name"})
+	assert.NoError(t, err)
+
+	err = cmd.Args(cmd, []string{})
+	assert.Error(t, err)
+
+	err = cmd.Args(cmd, []string{"name1", "name2"})
+	assert.Error(t, err)
+}
+
+func TestNewResumeCmd_Details(t *testing.T) {
+	cmd := newResumeCmd()
+
+	assert.Equal(t, "resume <name>", cmd.Use)
+	assert.Equal(t, "Resume an interrupted workflow", cmd.Short)
+	assert.Contains(t, cmd.Long, "Resume a workflow")
+	assert.NotNil(t, cmd.RunE)
+
+	err := cmd.Args(cmd, []string{"workflow-name"})
+	assert.NoError(t, err)
+
+	err = cmd.Args(cmd, []string{})
+	assert.Error(t, err)
+
+	err = cmd.Args(cmd, []string{"name1", "name2"})
+	assert.Error(t, err)
+}
+
+func TestNewDeleteCmd_Details(t *testing.T) {
+	cmd := newDeleteCmd()
+
+	assert.Equal(t, "delete <name>", cmd.Use)
+	assert.Equal(t, "Delete a workflow", cmd.Short)
+	assert.Contains(t, cmd.Long, "Delete a workflow")
+	assert.NotNil(t, cmd.RunE)
+
+	forceFlag := cmd.Flags().Lookup("force")
+	require.NotNil(t, forceFlag)
+	assert.Equal(t, "bool", forceFlag.Value.Type())
+
+	err := cmd.Args(cmd, []string{"workflow-name"})
+	assert.NoError(t, err)
+
+	err = cmd.Args(cmd, []string{})
+	assert.Error(t, err)
+
+	err = cmd.Args(cmd, []string{"name1", "name2"})
+	assert.Error(t, err)
+}
+
+func TestNewCleanCmd_Details(t *testing.T) {
+	cmd := newCleanCmd()
+
+	assert.Equal(t, "clean", cmd.Use)
+	assert.Equal(t, "Delete all completed workflows", cmd.Short)
+	assert.Contains(t, cmd.Long, "completed successfully")
+	assert.NotNil(t, cmd.RunE)
+
+	forceFlag := cmd.Flags().Lookup("force")
+	require.NotNil(t, forceFlag)
+	assert.Equal(t, "bool", forceFlag.Value.Type())
+
+	err := cmd.Args(cmd, []string{})
+	assert.NoError(t, err)
+
+	err = cmd.Args(cmd, []string{"extra"})
+	assert.Error(t, err)
+}
+
+func TestAllCommands_HaveRunE(t *testing.T) {
+	commands := []struct {
+		name    string
+		cmdFunc func() *cobra.Command
+	}{
+		{"start", newStartCmd},
+		{"list", newListCmd},
+		{"status", newStatusCmd},
+		{"resume", newResumeCmd},
+		{"delete", newDeleteCmd},
+		{"clean", newCleanCmd},
+	}
+
+	for _, tc := range commands {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := tc.cmdFunc()
+			assert.NotNil(t, cmd.RunE, "%s command should have RunE", tc.name)
+		})
+	}
+}
+
+func TestCommandUsageAndShort(t *testing.T) {
+	tests := []struct {
+		name          string
+		cmdFunc       func() *cobra.Command
+		expectedUse   string
+		expectedShort string
+	}{
+		{
+			name:          "root",
+			cmdFunc:       newRootCmd,
+			expectedUse:   "claude-workflow",
+			expectedShort: "Orchestrate multi-phase development workflows with Claude Code CLI",
+		},
+		{
+			name:          "start",
+			cmdFunc:       newStartCmd,
+			expectedUse:   "start <name> <description>",
+			expectedShort: "Start a new workflow",
+		},
+		{
+			name:          "list",
+			cmdFunc:       newListCmd,
+			expectedUse:   "list",
+			expectedShort: "List all workflows",
+		},
+		{
+			name:          "status",
+			cmdFunc:       newStatusCmd,
+			expectedUse:   "status <name>",
+			expectedShort: "Show workflow status",
+		},
+		{
+			name:          "resume",
+			cmdFunc:       newResumeCmd,
+			expectedUse:   "resume <name>",
+			expectedShort: "Resume an interrupted workflow",
+		},
+		{
+			name:          "delete",
+			cmdFunc:       newDeleteCmd,
+			expectedUse:   "delete <name>",
+			expectedShort: "Delete a workflow",
+		},
+		{
+			name:          "clean",
+			cmdFunc:       newCleanCmd,
+			expectedUse:   "clean",
+			expectedShort: "Delete all completed workflows",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := tt.cmdFunc()
+			assert.Equal(t, tt.expectedUse, cmd.Use)
+			assert.Equal(t, tt.expectedShort, cmd.Short)
+		})
+	}
+}
+
+func TestFlagUsage(t *testing.T) {
+	tests := []struct {
+		name     string
+		cmdFunc  func() *cobra.Command
+		flagName string
+		usage    string
+	}{
+		{
+			name:     "start type flag",
+			cmdFunc:  newStartCmd,
+			flagName: "type",
+			usage:    "workflow type (feature or fix)",
+		},
+		{
+			name:     "delete force flag",
+			cmdFunc:  newDeleteCmd,
+			flagName: "force",
+			usage:    "skip confirmation prompt",
+		},
+		{
+			name:     "clean force flag",
+			cmdFunc:  newCleanCmd,
+			flagName: "force",
+			usage:    "skip confirmation prompt",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := tt.cmdFunc()
+			flag := cmd.Flags().Lookup(tt.flagName)
+			require.NotNil(t, flag)
+			assert.Equal(t, tt.usage, flag.Usage)
+		})
+	}
+}
+
+func TestPersistentFlagUsage(t *testing.T) {
+	cmd := newRootCmd()
+
+	tests := []struct {
+		flagName string
+		usage    string
+	}{
+		{
+			flagName: "base-dir",
+			usage:    "base directory for workflows",
+		},
+		{
+			flagName: "max-lines",
+			usage:    "PR split threshold for lines",
+		},
+		{
+			flagName: "max-files",
+			usage:    "PR split threshold for files",
+		},
+		{
+			flagName: "claude-path",
+			usage:    "path to claude CLI",
+		},
+		{
+			flagName: "dangerously-skip-permissions",
+			usage:    "skip all permission prompts in Claude Code (use with caution)",
+		},
+		{
+			flagName: "timeout-planning",
+			usage:    "planning phase timeout",
+		},
+		{
+			flagName: "timeout-implementation",
+			usage:    "implementation phase timeout",
+		},
+		{
+			flagName: "timeout-refactoring",
+			usage:    "refactoring phase timeout",
+		},
+		{
+			flagName: "timeout-pr-split",
+			usage:    "PR split phase timeout",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.flagName, func(t *testing.T) {
+			flag := cmd.PersistentFlags().Lookup(tt.flagName)
+			require.NotNil(t, flag)
+			assert.Equal(t, tt.usage, flag.Usage)
+		})
+	}
+}
+
+func TestStartCmd_InvalidWorkflowType(t *testing.T) {
+	tests := []struct {
+		name         string
+		workflowType string
+		wantErrMsg   string
+	}{
+		{
+			name:         "invalid workflow type",
+			workflowType: "bug",
+			wantErrMsg:   "invalid workflow type: bug (must be 'feature' or 'fix')",
+		},
+		{
+			name:         "empty workflow type results in error",
+			workflowType: "",
+			wantErrMsg:   "invalid workflow type:  (must be 'feature' or 'fix')",
+		},
+		{
+			name:         "numeric workflow type",
+			workflowType: "123",
+			wantErrMsg:   "invalid workflow type: 123 (must be 'feature' or 'fix')",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rootCmd := newRootCmd()
+			rootCmd.SetArgs([]string{"start", "test-name", "test-desc", "--type", tt.workflowType})
+
+			buf := new(bytes.Buffer)
+			rootCmd.SetOut(buf)
+			rootCmd.SetErr(buf)
+
+			err := rootCmd.Execute()
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErrMsg)
+		})
+	}
+}
+
+func TestCommands_ArgsValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		cmdArgs []string
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name:    "start with insufficient args",
+			cmdArgs: []string{"start", "name"},
+			wantErr: true,
+			errMsg:  "accepts 2 arg(s), received 1",
+		},
+		{
+			name:    "start with too many args",
+			cmdArgs: []string{"start", "name", "desc", "extra", "--type", "feature"},
+			wantErr: true,
+			errMsg:  "accepts 2 arg(s), received 3",
+		},
+		{
+			name:    "status without args",
+			cmdArgs: []string{"status"},
+			wantErr: true,
+			errMsg:  "accepts 1 arg(s), received 0",
+		},
+		{
+			name:    "status with too many args",
+			cmdArgs: []string{"status", "name1", "name2"},
+			wantErr: true,
+			errMsg:  "accepts 1 arg(s), received 2",
+		},
+		{
+			name:    "resume without args",
+			cmdArgs: []string{"resume"},
+			wantErr: true,
+			errMsg:  "accepts 1 arg(s), received 0",
+		},
+		{
+			name:    "resume with too many args",
+			cmdArgs: []string{"resume", "name1", "name2"},
+			wantErr: true,
+			errMsg:  "accepts 1 arg(s), received 2",
+		},
+		{
+			name:    "delete without args",
+			cmdArgs: []string{"delete"},
+			wantErr: true,
+			errMsg:  "accepts 1 arg(s), received 0",
+		},
+		{
+			name:    "delete with too many args",
+			cmdArgs: []string{"delete", "name1", "name2"},
+			wantErr: true,
+			errMsg:  "accepts 1 arg(s), received 2",
+		},
+		{
+			name:    "list with args",
+			cmdArgs: []string{"list", "extra"},
+			wantErr: true,
+			errMsg:  "unknown command",
+		},
+		{
+			name:    "clean with args",
+			cmdArgs: []string{"clean", "extra"},
+			wantErr: true,
+			errMsg:  "unknown command",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rootCmd := newRootCmd()
+			rootCmd.SetArgs(tt.cmdArgs)
+
+			buf := new(bytes.Buffer)
+			rootCmd.SetOut(buf)
+			rootCmd.SetErr(buf)
+
+			err := rootCmd.Execute()
+
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errMsg)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestRootCmd_SubcommandExistence(t *testing.T) {
+	rootCmd := newRootCmd()
+
+	tests := []struct {
+		cmdName string
+	}{
+		{cmdName: "start"},
+		{cmdName: "list"},
+		{cmdName: "status"},
+		{cmdName: "resume"},
+		{cmdName: "delete"},
+		{cmdName: "clean"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.cmdName, func(t *testing.T) {
+			cmd, _, err := rootCmd.Find([]string{tt.cmdName})
+			require.NoError(t, err)
+			assert.Equal(t, tt.cmdName, cmd.Name())
+		})
+	}
+}
+
+func TestRootCmd_InvalidSubcommand(t *testing.T) {
+	rootCmd := newRootCmd()
+	rootCmd.SetArgs([]string{"invalid-command"})
+
+	buf := new(bytes.Buffer)
+	rootCmd.SetOut(buf)
+	rootCmd.SetErr(buf)
+
+	err := rootCmd.Execute()
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown command")
+}
+
+func TestCommandCreation_AllFunctionsReturn(t *testing.T) {
+	tests := []struct {
+		name    string
+		cmdFunc func() *cobra.Command
+	}{
+		{"newRootCmd", newRootCmd},
+		{"newStartCmd", newStartCmd},
+		{"newListCmd", newListCmd},
+		{"newStatusCmd", newStatusCmd},
+		{"newResumeCmd", newResumeCmd},
+		{"newDeleteCmd", newDeleteCmd},
+		{"newCleanCmd", newCleanCmd},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := tt.cmdFunc()
+			assert.NotNil(t, cmd)
+			assert.NotEmpty(t, cmd.Use)
+			assert.NotEmpty(t, cmd.Short)
+			assert.NotEmpty(t, cmd.Long)
+		})
+	}
+}
+
+func TestListCmd_ExecutionWithoutWorkflows(t *testing.T) {
+	rootCmd := newRootCmd()
+	rootCmd.SetArgs([]string{"list", "--base-dir", "/tmp/nonexistent-workflow-dir-test"})
+
+	buf := new(bytes.Buffer)
+	rootCmd.SetOut(buf)
+	rootCmd.SetErr(buf)
+
+	err := rootCmd.Execute()
+
+	assert.NoError(t, err)
+}
+
+func TestStatusCmd_ExecutionWithNonexistentWorkflow(t *testing.T) {
+	rootCmd := newRootCmd()
+	rootCmd.SetArgs([]string{"status", "nonexistent-workflow", "--base-dir", "/tmp/nonexistent-workflow-dir-test"})
+
+	buf := new(bytes.Buffer)
+	rootCmd.SetOut(buf)
+	rootCmd.SetErr(buf)
+
+	err := rootCmd.Execute()
+
+	assert.Error(t, err)
+}
+
+func TestResumeCmd_ExecutionWithNonexistentWorkflow(t *testing.T) {
+	rootCmd := newRootCmd()
+	rootCmd.SetArgs([]string{"resume", "nonexistent-workflow", "--base-dir", "/tmp/nonexistent-workflow-dir-test"})
+
+	buf := new(bytes.Buffer)
+	rootCmd.SetOut(buf)
+	rootCmd.SetErr(buf)
+
+	err := rootCmd.Execute()
+
+	assert.Error(t, err)
+}
+
+func TestDeleteCmd_ExecutionWithNonexistentWorkflow(t *testing.T) {
+	rootCmd := newRootCmd()
+	rootCmd.SetArgs([]string{"delete", "nonexistent-workflow", "--force", "--base-dir", "/tmp/nonexistent-workflow-dir-test"})
+
+	buf := new(bytes.Buffer)
+	rootCmd.SetOut(buf)
+	rootCmd.SetErr(buf)
+
+	err := rootCmd.Execute()
+
+	assert.Error(t, err)
+}
+
+func TestCleanCmd_ExecutionWithoutWorkflows(t *testing.T) {
+	rootCmd := newRootCmd()
+	rootCmd.SetArgs([]string{"clean", "--force", "--base-dir", "/tmp/nonexistent-workflow-dir-test"})
+
+	buf := new(bytes.Buffer)
+	rootCmd.SetOut(buf)
+	rootCmd.SetErr(buf)
+
+	err := rootCmd.Execute()
+
+	assert.NoError(t, err)
+}
+
+func TestNewStartCmd_FlagType(t *testing.T) {
+	cmd := newStartCmd()
+
+	typeFlag := cmd.Flags().Lookup("type")
+	require.NotNil(t, typeFlag)
+
+	err := typeFlag.Value.Set("feature")
+	require.NoError(t, err)
+	assert.Equal(t, "feature", typeFlag.Value.String())
+
+	err = typeFlag.Value.Set("fix")
+	require.NoError(t, err)
+	assert.Equal(t, "fix", typeFlag.Value.String())
+}
+
+func TestNewDeleteCmd_FlagModification(t *testing.T) {
+	cmd := newDeleteCmd()
+
+	forceFlag := cmd.Flags().Lookup("force")
+	require.NotNil(t, forceFlag)
+
+	assert.Equal(t, "false", forceFlag.DefValue)
+
+	err := forceFlag.Value.Set("true")
+	require.NoError(t, err)
+	assert.Equal(t, "true", forceFlag.Value.String())
+
+	err = forceFlag.Value.Set("false")
+	require.NoError(t, err)
+	assert.Equal(t, "false", forceFlag.Value.String())
+}
+
+func TestNewCleanCmd_FlagModification(t *testing.T) {
+	cmd := newCleanCmd()
+
+	forceFlag := cmd.Flags().Lookup("force")
+	require.NotNil(t, forceFlag)
+
+	assert.Equal(t, "false", forceFlag.DefValue)
+
+	err := forceFlag.Value.Set("true")
+	require.NoError(t, err)
+	assert.Equal(t, "true", forceFlag.Value.String())
+}
+
+func TestPersistentFlags_Modification(t *testing.T) {
+	cmd := newRootCmd()
+
+	tests := []struct {
+		flagName string
+		setValue string
+	}{
+		{"base-dir", "/custom/path"},
+		{"max-lines", "200"},
+		{"max-files", "20"},
+		{"claude-path", "/custom/claude"},
+		{"dangerously-skip-permissions", "true"},
+		{"timeout-planning", "2h"},
+		{"timeout-implementation", "8h"},
+		{"timeout-refactoring", "8h"},
+		{"timeout-pr-split", "2h"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.flagName, func(t *testing.T) {
+			flag := cmd.PersistentFlags().Lookup(tt.flagName)
+			require.NotNil(t, flag)
+
+			err := flag.Value.Set(tt.setValue)
+			assert.NoError(t, err)
+		})
+	}
+}
+
+func TestCommandChaining(t *testing.T) {
+	rootCmd := newRootCmd()
+
+	commandNames := []string{"start", "list", "status", "resume", "delete", "clean"}
+
+	for _, name := range commandNames {
+		found := false
+		for _, cmd := range rootCmd.Commands() {
+			if cmd.Name() == name {
+				found = true
+				assert.NotNil(t, cmd.Use)
+				assert.NotNil(t, cmd.Short)
+				assert.NotNil(t, cmd.Long)
+				break
+			}
+		}
+		assert.True(t, found, "Command %s should be registered", name)
+	}
+}
+
+func TestStartCmd_ValidWorkflowTypes(t *testing.T) {
+	tests := []struct {
+		name         string
+		workflowType string
+		wantErr      bool
+	}{
+		{
+			name:         "feature type",
+			workflowType: "feature",
+			wantErr:      true,
+		},
+		{
+			name:         "fix type",
+			workflowType: "fix",
+			wantErr:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rootCmd := newRootCmd()
+			rootCmd.SetArgs([]string{"start", "test-workflow", "test description", "--type", tt.workflowType})
+
+			buf := new(bytes.Buffer)
+			rootCmd.SetOut(buf)
+			rootCmd.SetErr(buf)
+
+			err := rootCmd.Execute()
+
+			if tt.wantErr {
+				assert.Error(t, err)
+			}
+		})
+	}
+}
+
+func TestAllCommands_MinimalExecution(t *testing.T) {
+	tests := []struct {
+		name        string
+		cmdArgs     []string
+		expectError bool
+	}{
+		{
+			name:        "list command execution",
+			cmdArgs:     []string{"list", "--base-dir", "/tmp/test-workflows-minimal"},
+			expectError: false,
+		},
+		{
+			name:        "status command with name",
+			cmdArgs:     []string{"status", "test", "--base-dir", "/tmp/test-workflows-minimal"},
+			expectError: true,
+		},
+		{
+			name:        "resume command with name",
+			cmdArgs:     []string{"resume", "test", "--base-dir", "/tmp/test-workflows-minimal"},
+			expectError: true,
+		},
+		{
+			name:        "delete command with force",
+			cmdArgs:     []string{"delete", "test", "--force", "--base-dir", "/tmp/test-workflows-minimal"},
+			expectError: true,
+		},
+		{
+			name:        "clean command with force",
+			cmdArgs:     []string{"clean", "--force", "--base-dir", "/tmp/test-workflows-minimal"},
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rootCmd := newRootCmd()
+			rootCmd.SetArgs(tt.cmdArgs)
+
+			buf := new(bytes.Buffer)
+			rootCmd.SetOut(buf)
+			rootCmd.SetErr(buf)
+
+			err := rootCmd.Execute()
+
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestListCmd_WithWorkflows(t *testing.T) {
+	tempDir := t.TempDir()
+
+	state := workflow.WorkflowState{
+		Version:      "1.0",
+		Name:         "test-workflow",
+		Type:         workflow.WorkflowTypeFeature,
+		Description:  "test description",
+		CurrentPhase: workflow.PhaseCompleted,
+		CreatedAt:    time.Now().Add(-1 * time.Hour),
+		UpdatedAt:    time.Now(),
+		Phases:       make(map[workflow.Phase]*workflow.PhaseState),
+	}
+
+	workflowDir := filepath.Join(tempDir, "test-workflow")
+	err := os.MkdirAll(workflowDir, 0755)
+	require.NoError(t, err)
+
+	stateFile := filepath.Join(workflowDir, "state.json")
+	data, err := json.Marshal(state)
+	require.NoError(t, err)
+
+	err = os.WriteFile(stateFile, data, 0644)
+	require.NoError(t, err)
+
+	rootCmd := newRootCmd()
+	rootCmd.SetArgs([]string{"list", "--base-dir", tempDir})
+
+	buf := new(bytes.Buffer)
+	rootCmd.SetOut(buf)
+	rootCmd.SetErr(buf)
+
+	err = rootCmd.Execute()
+
+	assert.NoError(t, err)
+}
+
+func TestCleanCmd_WithCompletedWorkflows(t *testing.T) {
+	tempDir := t.TempDir()
+
+	state := workflow.WorkflowState{
+		Version:      "1.0",
+		Name:         "completed-workflow",
+		Type:         workflow.WorkflowTypeFeature,
+		Description:  "completed test",
+		CurrentPhase: workflow.PhaseCompleted,
+		CreatedAt:    time.Now().Add(-1 * time.Hour),
+		UpdatedAt:    time.Now(),
+		Phases:       make(map[workflow.Phase]*workflow.PhaseState),
+	}
+
+	workflowDir := filepath.Join(tempDir, "completed-workflow")
+	err := os.MkdirAll(workflowDir, 0755)
+	require.NoError(t, err)
+
+	stateFile := filepath.Join(workflowDir, "state.json")
+	data, err := json.Marshal(state)
+	require.NoError(t, err)
+
+	err = os.WriteFile(stateFile, data, 0644)
+	require.NoError(t, err)
+
+	rootCmd := newRootCmd()
+	rootCmd.SetArgs([]string{"clean", "--force", "--base-dir", tempDir})
+
+	buf := new(bytes.Buffer)
+	rootCmd.SetOut(buf)
+	rootCmd.SetErr(buf)
+
+	err = rootCmd.Execute()
+
+	assert.NoError(t, err)
+}
+
+func TestDeleteCmd_WithExistingWorkflow(t *testing.T) {
+	tempDir := t.TempDir()
+
+	state := workflow.WorkflowState{
+		Version:      "1.0",
+		Name:         "delete-test",
+		Type:         workflow.WorkflowTypeFix,
+		Description:  "test delete",
+		CurrentPhase: workflow.PhasePlanning,
+		CreatedAt:    time.Now().Add(-1 * time.Hour),
+		UpdatedAt:    time.Now(),
+		Phases:       make(map[workflow.Phase]*workflow.PhaseState),
+	}
+
+	workflowDir := filepath.Join(tempDir, "delete-test")
+	err := os.MkdirAll(workflowDir, 0755)
+	require.NoError(t, err)
+
+	stateFile := filepath.Join(workflowDir, "state.json")
+	data, err := json.Marshal(state)
+	require.NoError(t, err)
+
+	err = os.WriteFile(stateFile, data, 0644)
+	require.NoError(t, err)
+
+	rootCmd := newRootCmd()
+	rootCmd.SetArgs([]string{"delete", "delete-test", "--force", "--base-dir", tempDir})
+
+	buf := new(bytes.Buffer)
+	rootCmd.SetOut(buf)
+	rootCmd.SetErr(buf)
+
+	err = rootCmd.Execute()
+
+	assert.NoError(t, err)
+}
+
+func TestStatusCmd_WithExistingWorkflow(t *testing.T) {
+	tempDir := t.TempDir()
+
+	state := workflow.WorkflowState{
+		Version:      "1.0",
+		Name:         "status-test",
+		Type:         workflow.WorkflowTypeFeature,
+		Description:  "test status",
+		CurrentPhase: workflow.PhasePlanning,
+		CreatedAt:    time.Now().Add(-1 * time.Hour),
+		UpdatedAt:    time.Now(),
+		Phases:       make(map[workflow.Phase]*workflow.PhaseState),
+	}
+
+	workflowDir := filepath.Join(tempDir, "status-test")
+	err := os.MkdirAll(workflowDir, 0755)
+	require.NoError(t, err)
+
+	stateFile := filepath.Join(workflowDir, "state.json")
+	data, err := json.Marshal(state)
+	require.NoError(t, err)
+
+	err = os.WriteFile(stateFile, data, 0644)
+	require.NoError(t, err)
+
+	rootCmd := newRootCmd()
+	rootCmd.SetArgs([]string{"status", "status-test", "--base-dir", tempDir})
+
+	buf := new(bytes.Buffer)
+	rootCmd.SetOut(buf)
+	rootCmd.SetErr(buf)
+
+	err = rootCmd.Execute()
+
+	assert.NoError(t, err)
 }
