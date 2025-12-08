@@ -992,3 +992,34 @@ func TestFileStateManager_ConcurrentAccess(t *testing.T) {
 	err = fsm.unlock(workflowName)
 	require.NoError(t, err)
 }
+
+func TestFileStateManager_ListWorkflows_WithCorruptedState(t *testing.T) {
+	tmpDir := t.TempDir()
+	sm := NewStateManager(tmpDir)
+
+	_, err := sm.InitState("good-workflow", "test", WorkflowTypeFeature)
+	require.NoError(t, err)
+
+	corruptedDir := filepath.Join(tmpDir, "corrupted-workflow")
+	err = os.MkdirAll(corruptedDir, 0755)
+	require.NoError(t, err)
+	err = os.WriteFile(filepath.Join(corruptedDir, "state.json"), []byte("invalid json"), 0644)
+	require.NoError(t, err)
+
+	workflows, err := sm.ListWorkflows()
+	require.NoError(t, err)
+
+	assert.Len(t, workflows, 1)
+	assert.Equal(t, "good-workflow", workflows[0].Name)
+}
+
+func TestFileStateManager_AtomicWrite_Error(t *testing.T) {
+	tmpDir := t.TempDir()
+	sm := NewStateManager(tmpDir)
+	fsm, ok := sm.(*fileStateManager)
+	require.True(t, ok)
+
+	invalidPath := filepath.Join("/proc/invalid/path/that/cannot/exist", "file.json")
+	err := fsm.atomicWrite(invalidPath, []byte("test"))
+	assert.Error(t, err)
+}

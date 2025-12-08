@@ -2269,3 +2269,81 @@ func TestFormatCIErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestOrchestrator_executePlanning_ParseErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		setupMocks func(*MockStateManager, *MockClaudeExecutor, *MockPromptGenerator, *MockOutputParser)
+		wantPhase  Phase
+	}{
+		{
+			name: "fails when ExtractJSON fails and saves raw output",
+			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser) {
+				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
+				pg.On("GeneratePlanningPrompt", WorkflowTypeFeature, "test description", []string(nil)).Return("planning prompt", nil)
+				exec.On("ExecuteStreaming", mock.Anything, mock.Anything, mock.Anything).Return(&ExecuteResult{
+					Output:   "some invalid output without json",
+					ExitCode: 0,
+				}, nil)
+				op.On("ExtractJSON", mock.Anything).Return("", errors.New("no JSON found"))
+				sm.On("SaveRawOutput", "test-workflow", PhasePlanning, "some invalid output without json").Return(nil)
+				sm.On("WorkflowDir", "test-workflow").Return("/tmp/workflows/test-workflow")
+			},
+			wantPhase: PhaseFailed,
+		},
+		{
+			name: "fails when ParsePlan fails and saves raw output",
+			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser) {
+				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
+				pg.On("GeneratePlanningPrompt", WorkflowTypeFeature, "test description", []string(nil)).Return("planning prompt", nil)
+				exec.On("ExecuteStreaming", mock.Anything, mock.Anything, mock.Anything).Return(&ExecuteResult{
+					Output:   "```json\n{\"invalid\": \"plan\"}\n```",
+					ExitCode: 0,
+				}, nil)
+				op.On("ExtractJSON", mock.Anything).Return("{\"invalid\": \"plan\"}", nil)
+				op.On("ParsePlan", mock.Anything).Return((*Plan)(nil), errors.New("invalid plan structure"))
+				sm.On("SaveRawOutput", "test-workflow", PhasePlanning, "```json\n{\"invalid\": \"plan\"}\n```").Return(nil)
+				sm.On("WorkflowDir", "test-workflow").Return("/tmp/workflows/test-workflow")
+			},
+			wantPhase: PhaseFailed,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockSM := new(MockStateManager)
+			mockExec := new(MockClaudeExecutor)
+			mockPG := new(MockPromptGenerator)
+			mockOP := new(MockOutputParser)
+
+			tt.setupMocks(mockSM, mockExec, mockPG, mockOP)
+
+			o := &Orchestrator{
+				stateManager:    mockSM,
+				executor:        mockExec,
+				promptGenerator: mockPG,
+				parser:          mockOP,
+				config:          DefaultConfig("/tmp/workflows"),
+			}
+
+			state := &WorkflowState{
+				Name:         "test-workflow",
+				Type:         WorkflowTypeFeature,
+				Description:  "test description",
+				CurrentPhase: PhasePlanning,
+				Phases: map[Phase]*PhaseState{
+					PhasePlanning: {Status: StatusInProgress},
+				},
+			}
+
+			err := o.executePlanning(context.Background(), state)
+
+			require.Error(t, err)
+			assert.Equal(t, tt.wantPhase, state.CurrentPhase)
+			mockSM.AssertExpectations(t)
+			mockExec.AssertExpectations(t)
+			mockPG.AssertExpectations(t)
+			mockOP.AssertExpectations(t)
+		})
+	}
+}
