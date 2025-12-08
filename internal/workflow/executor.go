@@ -317,7 +317,11 @@ func (e *claudeExecutor) ExecuteStreaming(ctx context.Context, config ExecuteCon
 				"structured_output": finalChunk.StructuredOutput,
 				"is_error":          finalChunk.IsError,
 			}
-			envelopeBytes, _ := json.Marshal(envelope)
+			envelopeBytes, err := json.Marshal(envelope)
+			if err != nil {
+				result.Error = err
+				return result, fmt.Errorf("failed to marshal structured output envelope: %w", err)
+			}
 			result.Output = string(envelopeBytes)
 		} else {
 			result.Output = finalChunk.Result
@@ -370,12 +374,4 @@ func extractToolInputSummary(toolName string, input json.RawMessage) string {
 	}
 
 	return ""
-}
-
-// truncateString truncates a string to maxLen characters
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen-3] + "..."
 }

@@ -71,23 +71,12 @@ type PRMetrics struct {
 	FilesDeleted  []string `json:"filesDeleted,omitempty"`
 }
 
-// FailureType represents the type of failure that occurred
-type FailureType string
-
-const (
-	// FailureTypeExecution indicates the phase execution itself failed (e.g., code generation)
-	FailureTypeExecution FailureType = "execution"
-	// FailureTypeCI indicates CI check failed after successful execution
-	FailureTypeCI FailureType = "ci"
-)
-
 // WorkflowError represents an error that occurred during workflow
 type WorkflowError struct {
 	Message     string                 `json:"message"`
 	Phase       Phase                  `json:"phase"`
 	Timestamp   time.Time              `json:"timestamp"`
 	Recoverable bool                   `json:"recoverable"`
-	FailureType FailureType            `json:"failureType,omitempty"`
 	Context     map[string]interface{} `json:"context,omitempty"`
 }
 
@@ -191,4 +180,5 @@ var (
 	ErrClaude              = errors.New("claude execution failed")
 	ErrParseJSON           = errors.New("failed to parse JSON output")
 	ErrUserCancelled       = errors.New("workflow cancelled by user")
+	ErrCICheckTimeout      = errors.New("CI check command timeout")
 )
