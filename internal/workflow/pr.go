@@ -10,6 +10,8 @@ import (
 	"strings"
 )
 
+var prNumberRegex = regexp.MustCompile(`/pull/(\d+)`)
+
 // PRManager handles PR creation and management
 type PRManager interface {
 	// CreatePR creates a new PR for the current branch and returns the PR number
@@ -159,8 +161,7 @@ func (p *prManager) PushBranch(ctx context.Context) error {
 // extractPRNumberFromURL extracts PR number from a GitHub PR URL
 func extractPRNumberFromURL(url string) (int, error) {
 	// Match URLs like https://github.com/owner/repo/pull/123
-	re := regexp.MustCompile(`/pull/(\d+)`)
-	matches := re.FindStringSubmatch(url)
+	matches := prNumberRegex.FindStringSubmatch(url)
 	if len(matches) < 2 {
 		return 0, fmt.Errorf("URL does not contain PR number")
 	}
