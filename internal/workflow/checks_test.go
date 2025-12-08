@@ -84,6 +84,30 @@ func TestParseCIOutput(t *testing.T) {
 			wantStatus:     "failure",
 			wantFailedJobs: []string{"test"},
 		},
+		{
+			name:           "cancelled job treated as failure",
+			output:         `[{"name":"build","state":"SUCCESS"},{"name":"test","state":"CANCELLED"}]`,
+			wantStatus:     "failure",
+			wantFailedJobs: []string{"test"},
+		},
+		{
+			name:           "multiple cancelled jobs",
+			output:         `[{"name":"build","state":"CANCELLED"},{"name":"test","state":"CANCELLED"}]`,
+			wantStatus:     "failure",
+			wantFailedJobs: []string{"build", "test"},
+		},
+		{
+			name:           "mixed failure and cancelled",
+			output:         `[{"name":"build","state":"FAILURE"},{"name":"test","state":"CANCELLED"},{"name":"lint","state":"SUCCESS"}]`,
+			wantStatus:     "failure",
+			wantFailedJobs: []string{"build", "test"},
+		},
+		{
+			name:           "lowercase cancelled state",
+			output:         `[{"name":"build","state":"success"},{"name":"test","state":"cancelled"}]`,
+			wantStatus:     "failure",
+			wantFailedJobs: []string{"test"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -165,6 +189,34 @@ func TestCountJobStatuses(t *testing.T) {
 			wantPassed:  1,
 			wantFailed:  1,
 			wantPending: 1,
+		},
+		{
+			name:        "cancelled job counted as failed",
+			output:      `[{"name":"build","state":"SUCCESS"},{"name":"test","state":"CANCELLED"}]`,
+			wantPassed:  1,
+			wantFailed:  1,
+			wantPending: 0,
+		},
+		{
+			name:        "multiple cancelled jobs",
+			output:      `[{"name":"build","state":"CANCELLED"},{"name":"test","state":"CANCELLED"},{"name":"lint","state":"SUCCESS"}]`,
+			wantPassed:  1,
+			wantFailed:  2,
+			wantPending: 0,
+		},
+		{
+			name:        "mixed failure and cancelled states",
+			output:      `[{"name":"build","state":"SUCCESS"},{"name":"test","state":"FAILURE"},{"name":"deploy","state":"CANCELLED"},{"name":"lint","state":"PENDING"}]`,
+			wantPassed:  1,
+			wantFailed:  2,
+			wantPending: 1,
+		},
+		{
+			name:        "lowercase cancelled state",
+			output:      `[{"name":"build","state":"success"},{"name":"test","state":"cancelled"}]`,
+			wantPassed:  1,
+			wantFailed:  1,
+			wantPending: 0,
 		},
 	}
 
