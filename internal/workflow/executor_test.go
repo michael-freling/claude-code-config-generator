@@ -308,6 +308,16 @@ func TestClaudeExecutor_findClaudePath(t *testing.T) {
 			claudePath: "/usr/local/bin/claude",
 			wantErr:    false,
 		},
+		{
+			name:       "uses default when claudePath is claude",
+			claudePath: "claude",
+			wantErr:    false,
+		},
+		{
+			name:       "uses default when claudePath is empty",
+			claudePath: "",
+			wantErr:    false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -324,7 +334,11 @@ func TestClaudeExecutor_findClaudePath(t *testing.T) {
 			}
 
 			require.NoError(t, err)
-			assert.Equal(t, tt.claudePath, got)
+			if tt.claudePath != "" && tt.claudePath != "claude" {
+				assert.Equal(t, tt.claudePath, got)
+			} else {
+				assert.NotEmpty(t, got)
+			}
 		})
 	}
 }
@@ -378,6 +392,99 @@ func TestMockExecutor_Execute_ExitCode(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Equal(t, 0, got.ExitCode)
+		})
+	}
+}
+
+func TestExtractToolInputSummary(t *testing.T) {
+	tests := []struct {
+		name     string
+		toolName string
+		input    string
+		want     string
+	}{
+		{
+			name:     "extracts file path from Read tool",
+			toolName: "Read",
+			input:    `{"file_path": "/path/to/file.go"}`,
+			want:     "/path/to/file.go",
+		},
+		{
+			name:     "extracts file path from Edit tool",
+			toolName: "Edit",
+			input:    `{"file_path": "/path/to/edit.go", "old_string": "foo"}`,
+			want:     "/path/to/edit.go",
+		},
+		{
+			name:     "extracts file path from Write tool",
+			toolName: "Write",
+			input:    `{"file_path": "/path/to/write.go", "content": "test"}`,
+			want:     "/path/to/write.go",
+		},
+		{
+			name:     "extracts pattern from Glob tool",
+			toolName: "Glob",
+			input:    `{"pattern": "*.go"}`,
+			want:     "*.go",
+		},
+		{
+			name:     "extracts pattern from Grep tool",
+			toolName: "Grep",
+			input:    `{"pattern": "TODO"}`,
+			want:     "TODO",
+		},
+		{
+			name:     "extracts command from Bash tool",
+			toolName: "Bash",
+			input:    `{"command": "ls -la"}`,
+			want:     "ls -la",
+		},
+		{
+			name:     "extracts description from Task tool",
+			toolName: "Task",
+			input:    `{"description": "Run tests"}`,
+			want:     "Run tests",
+		},
+		{
+			name:     "returns empty for unknown tool",
+			toolName: "UnknownTool",
+			input:    `{"some_field": "value"}`,
+			want:     "",
+		},
+		{
+			name:     "returns empty for invalid JSON",
+			toolName: "Read",
+			input:    `invalid json`,
+			want:     "",
+		},
+		{
+			name:     "returns empty for nil input",
+			toolName: "Read",
+			input:    "",
+			want:     "",
+		},
+		{
+			name:     "returns empty when field is not a string",
+			toolName: "Read",
+			input:    `{"file_path": 123}`,
+			want:     "",
+		},
+		{
+			name:     "returns empty when field is missing",
+			toolName: "Read",
+			input:    `{"other_field": "value"}`,
+			want:     "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var input []byte
+			if tt.input != "" {
+				input = []byte(tt.input)
+			}
+			got := extractToolInputSummary(tt.toolName, input)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
