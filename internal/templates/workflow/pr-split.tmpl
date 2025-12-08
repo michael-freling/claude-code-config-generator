@@ -32,7 +32,13 @@ You need to split the current changes into multiple pull requests for easier rev
    - Each address a specific aspect of the change
 
 ## Guidelines
-- Each child PR should be <100 lines or <10 files when possible
+- Group changes by logical boundaries such as:
+  - By subproject or module (if monorepo)
+  - By change type (refactoring vs feature additions vs bug fixes)
+  - By domain or feature area
+  - By dependency order (foundational changes before dependent ones)
+- Keep related changes together even if they span multiple files
+- Prioritize reviewability and logical cohesion over arbitrary size limits
 - Child PRs should have dependencies in the right order
 - Parent PR should reference all child PRs
 - Each PR should have a clear, descriptive title and description
