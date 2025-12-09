@@ -379,6 +379,7 @@ func TestOrchestrator_executePlanning(t *testing.T) {
 				promptGenerator: mockPG,
 				parser:          mockOP,
 				config:          DefaultConfig("/tmp/workflows"),
+				logger:          NewLogger(LogLevelNormal),
 			}
 
 			state := &WorkflowState{
@@ -479,6 +480,7 @@ func TestOrchestrator_executeConfirmation(t *testing.T) {
 				stateManager: mockSM,
 				config:       DefaultConfig("/tmp/workflows"),
 				confirmFunc:  tt.confirmFunc,
+				logger:       NewLogger(LogLevelNormal),
 			}
 
 			state := &WorkflowState{
@@ -614,6 +616,7 @@ func TestOrchestrator_executeImplementation(t *testing.T) {
 				promptGenerator: mockPG,
 				parser:          mockOP,
 				config:          DefaultConfig("/tmp/workflows"),
+				logger:          NewLogger(LogLevelNormal),
 				worktreeManager: mockWM,
 				ciCheckerFactory: func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker {
 					return mockCI
@@ -756,6 +759,7 @@ func TestOrchestrator_executeImplementation_ErrorPaths(t *testing.T) {
 				promptGenerator: mockPG,
 				parser:          mockOP,
 				config:          DefaultConfig("/tmp/workflows"),
+				logger:          NewLogger(LogLevelNormal),
 				worktreeManager: mockWM,
 				ciCheckerFactory: func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker {
 					return mockCI
@@ -942,6 +946,7 @@ func TestOrchestrator_executeImplementation_CIRetryLoop(t *testing.T) {
 				promptGenerator: mockPG,
 				parser:          mockOP,
 				config:          config,
+				logger:          NewLogger(LogLevelNormal),
 				worktreeManager: mockWM,
 				ciCheckerFactory: func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker {
 					return mockCI
@@ -1089,6 +1094,7 @@ func TestOrchestrator_executeRefactoring_ErrorPaths(t *testing.T) {
 				promptGenerator: mockPG,
 				parser:          mockOP,
 				config:          DefaultConfig("/tmp/workflows"),
+				logger:          NewLogger(LogLevelNormal),
 				ciCheckerFactory: func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker {
 					return mockCI
 				},
@@ -1239,6 +1245,7 @@ func TestOrchestrator_executeRefactoring_CIRetryLoop(t *testing.T) {
 				promptGenerator: mockPG,
 				parser:          mockOP,
 				config:          config,
+				logger:          NewLogger(LogLevelNormal),
 				ciCheckerFactory: func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker {
 					return mockCI
 				},
@@ -1375,6 +1382,7 @@ func TestOrchestrator_executePhase(t *testing.T) {
 				promptGenerator: mockPG,
 				parser:          mockOP,
 				config:          DefaultConfig("/tmp/workflows"),
+				logger:          NewLogger(LogLevelNormal),
 				worktreeManager: mockWM,
 				confirmFunc: func(plan *Plan) (bool, string, error) {
 					return true, "", nil
@@ -1418,6 +1426,7 @@ func TestOrchestrator_executePhase_InvalidPhase(t *testing.T) {
 	o := &Orchestrator{
 		stateManager: mockSM,
 		config:       DefaultConfig("/tmp/workflows"),
+		logger:       NewLogger(LogLevelNormal),
 	}
 
 	state := &WorkflowState{
@@ -1505,6 +1514,7 @@ func TestOrchestrator_Start(t *testing.T) {
 			o := &Orchestrator{
 				stateManager: mockSM,
 				config:       DefaultConfig("/tmp/workflows"),
+				logger:          NewLogger(LogLevelNormal),
 			}
 
 			err := o.Start(context.Background(), "test-workflow", "test description", WorkflowTypeFeature)
@@ -1574,6 +1584,7 @@ func TestOrchestrator_transitionPhase(t *testing.T) {
 			o := &Orchestrator{
 				stateManager: mockSM,
 				config:       DefaultConfig("/tmp/workflows"),
+				logger:       NewLogger(LogLevelNormal),
 			}
 
 			state := &WorkflowState{
@@ -1659,6 +1670,7 @@ func TestOrchestrator_Resume(t *testing.T) {
 			o := &Orchestrator{
 				stateManager: mockSM,
 				config:       DefaultConfig("/tmp/workflows"),
+			logger:       NewLogger(LogLevelNormal),
 			}
 
 			err := o.Resume(context.Background(), "test-workflow")
@@ -1742,6 +1754,7 @@ func TestOrchestrator_Resume_RestoresFailedPhase(t *testing.T) {
 			o := &Orchestrator{
 				stateManager: mockSM,
 				config:       DefaultConfig("/tmp/workflows"),
+			logger:       NewLogger(LogLevelNormal),
 			}
 
 			// Resume will fail because SaveState returns error, but we verify state was correctly set
@@ -1752,6 +1765,117 @@ func TestOrchestrator_Resume_RestoresFailedPhase(t *testing.T) {
 			assert.Equal(t, tt.expectedPhase, savedState.CurrentPhase)
 			assert.Nil(t, savedState.Error)
 			assert.Equal(t, tt.expectedPhaseStatus, savedState.Phases[tt.expectedPhase].Status)
+
+			mockSM.AssertExpectations(t)
+		})
+	}
+}
+
+func TestOrchestrator_Resume_PreservesCIFailure(t *testing.T) {
+	tests := []struct {
+		name                string
+		initialState        *WorkflowState
+		expectedPhase       Phase
+		expectedErrorNil    bool
+		expectedFailureType FailureType
+	}{
+		{
+			name: "preserves CI failure error for implementation phase",
+			initialState: &WorkflowState{
+				Name:         "test-workflow",
+				CurrentPhase: PhaseFailed,
+				Phases: map[Phase]*PhaseState{
+					PhaseImplementation: {
+						Status:   StatusFailed,
+						Feedback: []string{"CI check error: CI check timeout after 30m0s"},
+					},
+					PhasePlanning: {Status: StatusCompleted},
+				},
+				Error: &WorkflowError{
+					Message:     "failed to check CI: CI check timeout after 30m0s",
+					Phase:       PhaseImplementation,
+					Recoverable: true,
+					FailureType: FailureTypeCI,
+				},
+			},
+			expectedPhase:       PhaseImplementation,
+			expectedErrorNil:    false,
+			expectedFailureType: FailureTypeCI,
+		},
+		{
+			name: "clears non-CI execution failure error",
+			initialState: &WorkflowState{
+				Name:         "test-workflow",
+				CurrentPhase: PhaseFailed,
+				Phases: map[Phase]*PhaseState{
+					PhaseImplementation: {Status: StatusFailed},
+					PhasePlanning:       {Status: StatusCompleted},
+				},
+				Error: &WorkflowError{
+					Message:     "failed to execute implementation: timeout",
+					Phase:       PhaseImplementation,
+					Recoverable: true,
+					FailureType: FailureTypeExecution,
+				},
+			},
+			expectedPhase:    PhaseImplementation,
+			expectedErrorNil: true,
+		},
+		{
+			name: "preserves CI failure error for refactoring phase",
+			initialState: &WorkflowState{
+				Name:         "test-workflow",
+				CurrentPhase: PhaseFailed,
+				Phases: map[Phase]*PhaseState{
+					PhaseRefactoring: {
+						Status:   StatusFailed,
+						Feedback: []string{"CI check error: CI check timeout after 30m0s"},
+					},
+					PhaseImplementation: {Status: StatusCompleted},
+					PhasePlanning:       {Status: StatusCompleted},
+				},
+				Error: &WorkflowError{
+					Message:     "failed to check CI: CI check timeout after 30m0s",
+					Phase:       PhaseRefactoring,
+					Recoverable: true,
+					FailureType: FailureTypeCI,
+				},
+			},
+			expectedPhase:       PhaseRefactoring,
+			expectedErrorNil:    false,
+			expectedFailureType: FailureTypeCI,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockSM := new(MockStateManager)
+			mockSM.On("LoadState", "test-workflow").Return(tt.initialState, nil)
+
+			// Capture the saved state to verify
+			var savedState *WorkflowState
+			mockSM.On("SaveState", "test-workflow", mock.Anything).Run(func(args mock.Arguments) {
+				savedState = args.Get(1).(*WorkflowState)
+			}).Return(errors.New("stop execution for test"))
+
+			o := &Orchestrator{
+				stateManager: mockSM,
+				config:       DefaultConfig("/tmp/workflows"),
+				logger:       NewLogger(LogLevelNormal),
+			}
+
+			// Resume will fail because SaveState returns error, but we verify state was correctly set
+			err := o.Resume(context.Background(), "test-workflow")
+			require.Error(t, err)
+
+			// Verify the state was correctly modified before save
+			assert.Equal(t, tt.expectedPhase, savedState.CurrentPhase)
+			if tt.expectedErrorNil {
+				assert.Nil(t, savedState.Error)
+			} else {
+				assert.NotNil(t, savedState.Error)
+				assert.Equal(t, tt.expectedFailureType, savedState.Error.FailureType)
+			}
 
 			mockSM.AssertExpectations(t)
 		})
@@ -1797,6 +1921,7 @@ func TestOrchestrator_List(t *testing.T) {
 
 			o := &Orchestrator{
 				stateManager: mockSM,
+				logger:       NewLogger(LogLevelNormal),
 			}
 
 			got, err := o.List()
@@ -1866,6 +1991,7 @@ func TestOrchestrator_Clean(t *testing.T) {
 
 			o := &Orchestrator{
 				stateManager: mockSM,
+				logger:       NewLogger(LogLevelNormal),
 			}
 
 			got, err := o.Clean()
@@ -2113,7 +2239,9 @@ func TestDefaultConfig(t *testing.T) {
 }
 
 func TestOrchestrator_SetConfirmFunc(t *testing.T) {
-	o := &Orchestrator{}
+	o := &Orchestrator{
+		logger: NewLogger(LogLevelNormal),
+	}
 	customFunc := func(plan *Plan) (bool, string, error) {
 		return true, "", nil
 	}
@@ -2587,6 +2715,7 @@ func TestOrchestrator_executeRefactoring(t *testing.T) {
 				promptGenerator: mockPG,
 				parser:          mockOP,
 				config:          DefaultConfig("/tmp/workflows"),
+				logger:          NewLogger(LogLevelNormal),
 				ciCheckerFactory: func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker {
 					return mockCI
 				},
@@ -2670,6 +2799,7 @@ func TestOrchestrator_executePRSplit(t *testing.T) {
 				promptGenerator: mockPG,
 				parser:          mockOP,
 				config:          DefaultConfig("/tmp/workflows"),
+				logger:          NewLogger(LogLevelNormal),
 			}
 
 			metrics := &PRMetrics{
@@ -2773,6 +2903,7 @@ func TestOrchestrator_executePRSplit_CIFailureRetry(t *testing.T) {
 		promptGenerator: mockPG,
 		parser:          mockOP,
 		config:          config,
+		logger:          NewLogger(LogLevelNormal),
 		ciCheckerFactory: func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker {
 			return mockCI
 		},
@@ -2841,6 +2972,7 @@ func TestOrchestrator_Status(t *testing.T) {
 
 			o := &Orchestrator{
 				stateManager: mockSM,
+				logger:       NewLogger(LogLevelNormal),
 			}
 
 			got, err := o.Status("test-workflow")
@@ -2886,6 +3018,7 @@ func TestOrchestrator_Delete(t *testing.T) {
 
 			o := &Orchestrator{
 				stateManager: mockSM,
+				logger:       NewLogger(LogLevelNormal),
 			}
 
 			err := o.Delete("test-workflow")
@@ -2923,6 +3056,7 @@ func TestOrchestrator_failWorkflow(t *testing.T) {
 
 			o := &Orchestrator{
 				stateManager: mockSM,
+				logger:       NewLogger(LogLevelNormal),
 			}
 
 			state := &WorkflowState{
@@ -2968,6 +3102,7 @@ func TestOrchestrator_failWorkflowCI(t *testing.T) {
 
 			o := &Orchestrator{
 				stateManager: mockSM,
+				logger:       NewLogger(LogLevelNormal),
 			}
 
 			state := &WorkflowState{
@@ -3031,6 +3166,7 @@ func TestOrchestrator_failWorkflowWithType(t *testing.T) {
 
 			o := &Orchestrator{
 				stateManager: mockSM,
+				logger:       NewLogger(LogLevelNormal),
 			}
 
 			state := &WorkflowState{
@@ -3250,6 +3386,7 @@ func TestGetCIChecker(t *testing.T) {
 
 			o := &Orchestrator{
 				config:           config,
+				logger:          NewLogger(LogLevelNormal),
 				ciCheckerFactory: tt.ciCheckerFactory,
 			}
 
@@ -3470,6 +3607,7 @@ func TestOrchestrator_executePlanning_ParseErrors(t *testing.T) {
 				promptGenerator: mockPG,
 				parser:          mockOP,
 				config:          DefaultConfig("/tmp/workflows"),
+				logger:          NewLogger(LogLevelNormal),
 			}
 
 			state := &WorkflowState{

@@ -38,6 +38,7 @@ func TestNewRootCmd(t *testing.T) {
 	assert.NotNil(t, persistentFlags.Lookup("timeout-implementation"))
 	assert.NotNil(t, persistentFlags.Lookup("timeout-refactoring"))
 	assert.NotNil(t, persistentFlags.Lookup("timeout-pr-split"))
+	assert.NotNil(t, persistentFlags.Lookup("verbose"))
 }
 
 func TestSubcommands(t *testing.T) {
@@ -167,6 +168,12 @@ func TestPersistentFlags(t *testing.T) {
 			flagType:     "duration",
 			defaultValue: "1h0m0s",
 		},
+		{
+			name:         "verbose flag",
+			flagName:     "verbose",
+			flagType:     "bool",
+			defaultValue: "false",
+		},
 	}
 
 	for _, tt := range tests {
@@ -179,6 +186,75 @@ func TestPersistentFlags(t *testing.T) {
 			assert.Equal(t, tt.defaultValue, flag.DefValue)
 		})
 	}
+}
+
+func TestVerboseFlag(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		wantVerbose bool
+		wantErr     bool
+	}{
+		{
+			name:        "verbose flag not set defaults to false",
+			args:        []string{},
+			wantVerbose: false,
+			wantErr:     false,
+		},
+		{
+			name:        "verbose flag set with --verbose",
+			args:        []string{"--verbose"},
+			wantVerbose: true,
+			wantErr:     false,
+		},
+		{
+			name:        "verbose flag set with -v",
+			args:        []string{"-v"},
+			wantVerbose: true,
+			wantErr:     false,
+		},
+		{
+			name:        "verbose flag set to true explicitly",
+			args:        []string{"--verbose=true"},
+			wantVerbose: true,
+			wantErr:     false,
+		},
+		{
+			name:        "verbose flag set to false explicitly",
+			args:        []string{"--verbose=false"},
+			wantVerbose: false,
+			wantErr:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			verbose = false
+			cmd := newRootCmd()
+			cmd.SetArgs(tt.args)
+
+			err := cmd.ParseFlags(tt.args)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantVerbose, verbose)
+		})
+	}
+}
+
+func TestVerboseFlagMetadata(t *testing.T) {
+	cmd := newRootCmd()
+	flag := cmd.PersistentFlags().Lookup("verbose")
+
+	require.NotNil(t, flag, "verbose flag should exist")
+	assert.Equal(t, "bool", flag.Value.Type())
+	assert.Equal(t, "false", flag.DefValue)
+	assert.Equal(t, "v", flag.Shorthand)
+	assert.NotEmpty(t, flag.Usage)
 }
 
 func TestCommandArgs(t *testing.T) {

@@ -23,6 +23,7 @@ type Config struct {
 	CICheckTimeout             time.Duration
 	GHCommandTimeout           time.Duration
 	MaxFixAttempts             int
+	LogLevel                   LogLevel
 }
 
 // PhaseTimeouts holds timeout durations for each phase
@@ -45,6 +46,7 @@ func DefaultConfig(baseDir string) *Config {
 		CICheckTimeout:             30 * time.Minute,
 		GHCommandTimeout:           2 * time.Minute,
 		MaxFixAttempts:             10,
+		LogLevel:                   LogLevelNormal,
 		Timeouts: PhaseTimeouts{
 			Planning:       1 * time.Hour,
 			Implementation: 6 * time.Hour,
@@ -63,6 +65,7 @@ type Orchestrator struct {
 	config          *Config
 	confirmFunc     func(plan *Plan) (bool, string, error)
 	worktreeManager WorktreeManager
+	logger          Logger
 
 	// For testing - if nil, creates real checker
 	ciCheckerFactory func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker
@@ -88,7 +91,8 @@ func NewOrchestratorWithConfig(config *Config) (*Orchestrator, error) {
 		return nil, fmt.Errorf("failed to create prompt generator: %w", err)
 	}
 
-	executor := NewClaudeExecutorWithPath(config.ClaudePath)
+	logger := NewLogger(config.LogLevel)
+	executor := NewClaudeExecutorWithPath(config.ClaudePath, logger)
 	stateManager := NewStateManager(config.BaseDir)
 	parser := NewOutputParser()
 	worktreeManager := NewWorktreeManager(config.BaseDir)
@@ -101,6 +105,7 @@ func NewOrchestratorWithConfig(config *Config) (*Orchestrator, error) {
 		config:          config,
 		confirmFunc:     defaultConfirmFunc,
 		worktreeManager: worktreeManager,
+		logger:          logger,
 	}, nil
 }
 
@@ -133,9 +138,16 @@ func (o *Orchestrator) Start(ctx context.Context, name, description string, wfTy
 
 // Resume continues an existing workflow from current phase
 func (o *Orchestrator) Resume(ctx context.Context, name string) error {
+	o.logger.Verbose("Loading workflow state for '%s'", name)
 	state, err := o.stateManager.LoadState(name)
 	if err != nil {
 		return fmt.Errorf("failed to load workflow state: %w", err)
+	}
+
+	if phaseState, ok := state.Phases[state.CurrentPhase]; ok {
+		o.logger.Verbose("Current phase: %s, Status: %s", getPhaseName(state.CurrentPhase), phaseState.Status)
+	} else {
+		o.logger.Verbose("Current phase: %s", getPhaseName(state.CurrentPhase))
 	}
 
 	if state.CurrentPhase == PhaseCompleted {
@@ -222,6 +234,17 @@ func (o *Orchestrator) runWorkflow(ctx context.Context, state *WorkflowState) er
 	fmt.Printf("%s: %s\n", Bold("Type"), state.Type)
 	fmt.Printf("%s: %s\n", Bold("Description"), state.Description)
 
+	// Log configuration details in verbose mode
+	o.logger.Verbose("Configuration:")
+	o.logger.Verbose("  Base directory: %s", o.config.BaseDir)
+	o.logger.Verbose("  Claude path: %s", o.config.ClaudePath)
+	o.logger.Verbose("  Max PR lines: %d, Max PR files: %d", o.config.MaxLines, o.config.MaxFiles)
+	o.logger.Verbose("  Timeouts: planning=%s, impl=%s, refactor=%s, pr-split=%s",
+		FormatDuration(o.config.Timeouts.Planning),
+		FormatDuration(o.config.Timeouts.Implementation),
+		FormatDuration(o.config.Timeouts.Refactoring),
+		FormatDuration(o.config.Timeouts.PRSplit))
+
 	for {
 		if state.CurrentPhase == PhaseCompleted || state.CurrentPhase == PhaseFailed {
 			if state.CurrentPhase == PhaseCompleted {
@@ -273,6 +296,9 @@ func (o *Orchestrator) executePlanning(ctx context.Context, state *WorkflowState
 	now := time.Now()
 	phaseState.StartedAt = &now
 
+	if o.logger.IsVerbose() {
+		o.logger.Verbose("Saving workflow state to %s", o.stateManager.WorkflowDir(state.Name))
+	}
 	if err := o.stateManager.SaveState(state.Name, state); err != nil {
 		return fmt.Errorf("failed to save state: %w", err)
 	}
@@ -282,7 +308,9 @@ func (o *Orchestrator) executePlanning(ctx context.Context, state *WorkflowState
 		return o.failWorkflow(state, fmt.Errorf("failed to generate planning prompt: %w", err))
 	}
 
-	spinner := NewStreamingSpinner("Analyzing codebase...")
+	o.logger.Verbose("Generated planning prompt (%d characters)", len(prompt))
+
+	spinner := NewStreamingSpinnerWithLogger("Analyzing codebase...", o.logger)
 	spinner.Start()
 
 	result, err := o.executor.ExecuteStreaming(ctx, ExecuteConfig{
@@ -321,6 +349,9 @@ func (o *Orchestrator) executePlanning(ctx context.Context, state *WorkflowState
 		return o.failWorkflow(state, fmt.Errorf("failed to parse plan: %w", err))
 	}
 
+	if o.logger.IsVerbose() {
+		o.logger.Verbose("Saving plan to %s/plan.json", o.stateManager.WorkflowDir(state.Name))
+	}
 	if err := o.stateManager.SavePlan(state.Name, plan); err != nil {
 		spinner.Fail("Failed to save plan")
 		return o.failWorkflow(state, fmt.Errorf("failed to save plan: %w", err))
@@ -391,11 +422,13 @@ func (o *Orchestrator) executeImplementation(ctx context.Context, state *Workflo
 	}
 
 	if state.WorktreePath == "" {
+		o.logger.Verbose("Creating git worktree for workflow '%s'", state.Name)
 		worktreePath, err := o.worktreeManager.CreateWorktree(state.Name)
 		if err != nil {
 			return o.failWorkflow(state, fmt.Errorf("failed to create worktree: %w", err))
 		}
 		state.WorktreePath = worktreePath
+		o.logger.Verbose("Worktree created at: %s", worktreePath)
 		if err := o.stateManager.SaveState(state.Name, state); err != nil {
 			return fmt.Errorf("failed to save state with worktree path: %w", err)
 		}
@@ -436,7 +469,7 @@ func (o *Orchestrator) executeImplementation(ctx context.Context, state *Workflo
 			fmt.Printf("\n%s Attempt %d/%d to fix CI errors\n", Yellow("⚠"), attempt, o.config.MaxFixAttempts)
 		}
 
-		spinner := NewStreamingSpinner("Implementing changes...")
+		spinner := NewStreamingSpinnerWithLogger("Implementing changes...", o.logger)
 		spinner.Start()
 
 		result, err := o.executor.ExecuteStreaming(ctx, ExecuteConfig{
@@ -495,6 +528,9 @@ func (o *Orchestrator) executeImplementation(ctx context.Context, state *Workflo
 		ciSpinner := NewCISpinner("Waiting for CI to complete")
 		ciSpinner.Start()
 
+		o.logger.Verbose("Starting CI check with %s interval, %s timeout",
+			FormatDuration(o.config.CICheckInterval),
+			FormatDuration(o.config.CICheckTimeout))
 		ciChecker := o.getCIChecker(workingDir)
 		ciResult, err := ciChecker.WaitForCIWithProgress(ctx, 0, o.config.CICheckTimeout, CheckCIOptions{}, ciSpinner.OnProgress)
 		if err != nil {
@@ -576,7 +612,7 @@ func (o *Orchestrator) executeRefactoring(ctx context.Context, state *WorkflowSt
 			fmt.Printf("\n%s Attempt %d/%d to fix CI errors\n", Yellow("⚠"), attempt, o.config.MaxFixAttempts)
 		}
 
-		spinner := NewStreamingSpinner("Refactoring code...")
+		spinner := NewStreamingSpinnerWithLogger("Refactoring code...", o.logger)
 		spinner.Start()
 
 		result, err := o.executor.ExecuteStreaming(ctx, ExecuteConfig{
@@ -671,12 +707,19 @@ func (o *Orchestrator) executeRefactoring(ctx context.Context, state *WorkflowSt
 		return o.failWorkflow(state, fmt.Errorf("failed to get PR metrics: %w", err))
 	}
 
+	o.logger.Verbose("PR metrics: %d files changed, %d lines changed", metrics.FilesChanged, metrics.LinesChanged)
+
 	prSplitPhase := state.Phases[PhasePRSplit]
 	prSplitPhase.Metrics = metrics
 
 	needsPRSplit := metrics.LinesChanged > o.config.MaxLines || metrics.FilesChanged > o.config.MaxFiles
 	required := needsPRSplit
 	prSplitPhase.Required = &required
+
+	o.logger.Verbose("PR split needed: %v (lines: %d/%d, files: %d/%d)",
+		needsPRSplit,
+		metrics.LinesChanged, o.config.MaxLines,
+		metrics.FilesChanged, o.config.MaxFiles)
 
 	if err := o.stateManager.SaveState(state.Name, state); err != nil {
 		return fmt.Errorf("failed to save state: %w", err)
@@ -727,7 +770,7 @@ func (o *Orchestrator) executePRSplit(ctx context.Context, state *WorkflowState)
 			fmt.Printf("\n%s Attempt %d/%d to fix errors\n", Yellow("⚠"), attempt, o.config.MaxFixAttempts)
 		}
 
-		spinner := NewStreamingSpinner("Splitting PR into manageable pieces...")
+		spinner := NewStreamingSpinnerWithLogger("Splitting PR into manageable pieces...", o.logger)
 		spinner.Start()
 
 		result, err := o.executor.ExecuteStreaming(ctx, ExecuteConfig{
@@ -783,6 +826,7 @@ func (o *Orchestrator) executePRSplit(ctx context.Context, state *WorkflowState)
 		for i, childPR := range prResult.ChildPRs {
 			isLastChild := (i == len(prResult.ChildPRs)-1)
 
+			o.logger.Verbose("Checking child PR #%d: %s", childPR.Number, childPR.Title)
 			fmt.Printf("\n%s Checking child PR #%d: %s\n", Bold("→"), childPR.Number, childPR.Title)
 
 			opts := CheckCIOptions{
@@ -836,6 +880,17 @@ func (o *Orchestrator) transitionPhase(state *WorkflowState, nextPhase Phase) er
 	now := time.Now()
 	currentPhaseState.CompletedAt = &now
 	currentPhaseState.Status = StatusCompleted
+
+	// Log phase transition
+	var duration time.Duration
+	if currentPhaseState.StartedAt != nil {
+		duration = now.Sub(*currentPhaseState.StartedAt)
+	}
+	o.logger.Verbose("Transitioning from %s to %s", getPhaseName(state.CurrentPhase), getPhaseName(nextPhase))
+	o.logger.Verbose("Phase %s completed in %s (attempts: %d)",
+		getPhaseName(state.CurrentPhase),
+		FormatDuration(duration),
+		currentPhaseState.Attempts)
 
 	state.CurrentPhase = nextPhase
 

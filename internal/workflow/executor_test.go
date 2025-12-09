@@ -39,7 +39,8 @@ func TestNewClaudeExecutor(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := NewClaudeExecutor()
+			logger := NewLogger(LogLevelNormal)
+			got := NewClaudeExecutor(logger)
 			assert.NotNil(t, got)
 		})
 	}
@@ -58,7 +59,8 @@ func TestNewClaudeExecutorWithPath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := NewClaudeExecutorWithPath(tt.claudePath)
+			logger := NewLogger(LogLevelNormal)
+			got := NewClaudeExecutorWithPath(tt.claudePath, logger)
 			assert.NotNil(t, got)
 
 			executor, ok := got.(*claudeExecutor)
@@ -541,7 +543,7 @@ exit 0`,
 			err := os.WriteFile(scriptPath, []byte(tt.script), 0755)
 			require.NoError(t, err)
 
-			executor := NewClaudeExecutorWithPath(scriptPath)
+			executor := NewClaudeExecutorWithPath(scriptPath, NewLogger(LogLevelNormal))
 			ctx := context.Background()
 
 			got, err := executor.Execute(ctx, tt.config)
@@ -573,7 +575,7 @@ exit 0`
 	err := os.WriteFile(scriptPath, []byte(script), 0755)
 	require.NoError(t, err)
 
-	executor := NewClaudeExecutorWithPath(scriptPath)
+	executor := NewClaudeExecutorWithPath(scriptPath, NewLogger(LogLevelNormal))
 	ctx := context.Background()
 
 	config := ExecuteConfig{
@@ -599,7 +601,7 @@ exit 0`
 	err := os.WriteFile(scriptPath, []byte(script), 0755)
 	require.NoError(t, err)
 
-	executor := NewClaudeExecutorWithPath(scriptPath)
+	executor := NewClaudeExecutorWithPath(scriptPath, NewLogger(LogLevelNormal))
 	ctx, cancel := context.WithCancel(context.Background())
 
 	go func() {
@@ -776,7 +778,7 @@ exit 0`,
 			err := os.WriteFile(scriptPath, []byte(tt.script), 0755)
 			require.NoError(t, err)
 
-			executor := NewClaudeExecutorWithPath(scriptPath)
+			executor := NewClaudeExecutorWithPath(scriptPath, NewLogger(LogLevelNormal))
 			ctx := context.Background()
 
 			var toolEvents []ProgressEvent
@@ -819,7 +821,7 @@ while true; do sleep 0.1; done`
 	err := os.WriteFile(scriptPath, []byte(script), 0755)
 	require.NoError(t, err)
 
-	executor := NewClaudeExecutorWithPath(scriptPath)
+	executor := NewClaudeExecutorWithPath(scriptPath, NewLogger(LogLevelNormal))
 	ctx := context.Background()
 
 	config := ExecuteConfig{
@@ -836,14 +838,16 @@ while true; do sleep 0.1; done`
 
 func TestNewClaudeExecutorWithRunner(t *testing.T) {
 	mockRunner := new(MockCommandRunner)
+	logger := NewLogger(LogLevelNormal)
 
-	executor := NewClaudeExecutorWithRunner("/custom/claude", mockRunner)
+	executor := NewClaudeExecutorWithRunner("/custom/claude", mockRunner, logger)
 
 	require.NotNil(t, executor)
 	ce, ok := executor.(*claudeExecutor)
 	require.True(t, ok)
 	assert.Equal(t, "/custom/claude", ce.claudePath)
 	assert.Equal(t, mockRunner, ce.cmdRunner)
+	assert.Equal(t, logger, ce.logger)
 }
 
 func TestClaudeExecutor_Execute_ClaudeNotFound(t *testing.T) {
@@ -899,7 +903,7 @@ exit 0`
 	err := os.WriteFile(scriptPath, []byte(script), 0755)
 	require.NoError(t, err)
 
-	executor := NewClaudeExecutorWithPath(scriptPath)
+	executor := NewClaudeExecutorWithPath(scriptPath, NewLogger(LogLevelNormal))
 	ctx := context.Background()
 
 	config := ExecuteConfig{
@@ -928,7 +932,7 @@ exit 0`
 	err := os.WriteFile(scriptPath, []byte(script), 0755)
 	require.NoError(t, err)
 
-	executor := NewClaudeExecutorWithPath(scriptPath)
+	executor := NewClaudeExecutorWithPath(scriptPath, NewLogger(LogLevelNormal))
 	ctx := context.Background()
 
 	// No timeout set - should complete quickly
@@ -953,7 +957,7 @@ exit 0`
 	err := os.WriteFile(scriptPath, []byte(script), 0755)
 	require.NoError(t, err)
 
-	executor := NewClaudeExecutorWithPath(scriptPath)
+	executor := NewClaudeExecutorWithPath(scriptPath, NewLogger(LogLevelNormal))
 	ctx := context.Background()
 
 	// No timeout set
@@ -1087,7 +1091,7 @@ exit 0`,
 			err := os.WriteFile(scriptPath, []byte(tt.script), 0755)
 			require.NoError(t, err)
 
-			executor := NewClaudeExecutorWithPath(scriptPath)
+			executor := NewClaudeExecutorWithPath(scriptPath, NewLogger(LogLevelNormal))
 			ctx := context.Background()
 
 			config := ExecuteConfig{
@@ -1143,7 +1147,7 @@ exit 0`,
 			err := os.WriteFile(scriptPath, []byte(tt.script), 0755)
 			require.NoError(t, err)
 
-			executor := NewClaudeExecutorWithPath(scriptPath)
+			executor := NewClaudeExecutorWithPath(scriptPath, NewLogger(LogLevelNormal))
 			ctx := context.Background()
 
 			config := ExecuteConfig{
@@ -1191,7 +1195,7 @@ exit 0`,
 			err := os.WriteFile(scriptPath, []byte(tt.script), 0755)
 			require.NoError(t, err)
 
-			executor := NewClaudeExecutorWithPath(scriptPath)
+			executor := NewClaudeExecutorWithPath(scriptPath, NewLogger(LogLevelNormal))
 			ctx, cancel := context.WithCancel(context.Background())
 
 			go func() {
@@ -1247,7 +1251,7 @@ exit 0`,
 			err := os.WriteFile(scriptPath, []byte(tt.script), 0755)
 			require.NoError(t, err)
 
-			executor := NewClaudeExecutorWithPath(scriptPath)
+			executor := NewClaudeExecutorWithPath(scriptPath, NewLogger(LogLevelNormal))
 			ctx := context.Background()
 
 			config := ExecuteConfig{
@@ -1316,7 +1320,7 @@ exit 127`,
 			err := os.WriteFile(scriptPath, []byte(tt.script), 0755)
 			require.NoError(t, err)
 
-			executor := NewClaudeExecutorWithPath(scriptPath)
+			executor := NewClaudeExecutorWithPath(scriptPath, NewLogger(LogLevelNormal))
 			ctx := context.Background()
 
 			config := ExecuteConfig{
