@@ -49,6 +49,7 @@ type WorkflowState struct {
 	Phases       map[Phase]*PhaseState `json:"phases"`
 	Error        *WorkflowError        `json:"error,omitempty"`
 	WorktreePath string                `json:"worktreePath,omitempty"`
+	SplitPR      bool                  `json:"splitPR,omitempty"`
 }
 
 // PhaseState represents the state of a single phase
