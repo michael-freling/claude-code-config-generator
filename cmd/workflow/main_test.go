@@ -30,8 +30,7 @@ func TestNewRootCmd(t *testing.T) {
 
 	persistentFlags := cmd.PersistentFlags()
 	assert.NotNil(t, persistentFlags.Lookup("base-dir"))
-	assert.NotNil(t, persistentFlags.Lookup("max-lines"))
-	assert.NotNil(t, persistentFlags.Lookup("max-files"))
+	assert.NotNil(t, persistentFlags.Lookup("split-pr"))
 	assert.NotNil(t, persistentFlags.Lookup("claude-path"))
 	assert.NotNil(t, persistentFlags.Lookup("dangerously-skip-permissions"))
 	assert.NotNil(t, persistentFlags.Lookup("timeout-planning"))
@@ -121,16 +120,10 @@ func TestPersistentFlags(t *testing.T) {
 			defaultValue: ".claude/workflow",
 		},
 		{
-			name:         "max-lines flag",
-			flagName:     "max-lines",
-			flagType:     "int",
-			defaultValue: "100",
-		},
-		{
-			name:         "max-files flag",
-			flagName:     "max-files",
-			flagType:     "int",
-			defaultValue: "10",
+			name:         "split-pr flag",
+			flagName:     "split-pr",
+			flagType:     "bool",
+			defaultValue: "false",
 		},
 		{
 			name:         "claude-path flag",
@@ -614,8 +607,7 @@ func TestCreateOrchestrator(t *testing.T) {
 	tests := []struct {
 		name                       string
 		baseDir                    string
-		maxLines                   int
-		maxFiles                   int
+		splitPR                    bool
 		claudePath                 string
 		dangerouslySkipPermissions bool
 		timeoutPlanning            time.Duration
@@ -626,8 +618,7 @@ func TestCreateOrchestrator(t *testing.T) {
 		{
 			name:                       "default values",
 			baseDir:                    ".claude/workflow",
-			maxLines:                   100,
-			maxFiles:                   10,
+			splitPR:                    false,
 			claudePath:                 "claude",
 			dangerouslySkipPermissions: false,
 			timeoutPlanning:            1 * time.Hour,
@@ -638,8 +629,7 @@ func TestCreateOrchestrator(t *testing.T) {
 		{
 			name:                       "custom values",
 			baseDir:                    "/tmp/workflows",
-			maxLines:                   200,
-			maxFiles:                   20,
+			splitPR:                    true,
 			claudePath:                 "/usr/local/bin/claude",
 			dangerouslySkipPermissions: true,
 			timeoutPlanning:            2 * time.Hour,
@@ -652,8 +642,7 @@ func TestCreateOrchestrator(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			baseDir = tt.baseDir
-			maxLines = tt.maxLines
-			maxFiles = tt.maxFiles
+			splitPR = tt.splitPR
 			claudePath = tt.claudePath
 			dangerouslySkipPermissions = tt.dangerouslySkipPermissions
 			timeoutPlanning = tt.timeoutPlanning
@@ -781,8 +770,7 @@ func TestPersistentFlagsInheritance(t *testing.T) {
 
 			persistentFlags := []string{
 				"base-dir",
-				"max-lines",
-				"max-files",
+				"split-pr",
 				"claude-path",
 				"dangerously-skip-permissions",
 				"timeout-planning",
@@ -989,11 +977,8 @@ func TestPersistentFlagDefaults(t *testing.T) {
 	baseDir := cmd.PersistentFlags().Lookup("base-dir")
 	assert.Equal(t, ".claude/workflow", baseDir.DefValue)
 
-	maxLines := cmd.PersistentFlags().Lookup("max-lines")
-	assert.Equal(t, "100", maxLines.DefValue)
-
-	maxFiles := cmd.PersistentFlags().Lookup("max-files")
-	assert.Equal(t, "10", maxFiles.DefValue)
+	splitPR := cmd.PersistentFlags().Lookup("split-pr")
+	assert.Equal(t, "false", splitPR.DefValue)
 
 	claudePath := cmd.PersistentFlags().Lookup("claude-path")
 	assert.Equal(t, "claude", claudePath.DefValue)
@@ -1237,12 +1222,8 @@ func TestPersistentFlagUsage(t *testing.T) {
 			usage:    "base directory for workflows",
 		},
 		{
-			flagName: "max-lines",
-			usage:    "PR split threshold for lines",
-		},
-		{
-			flagName: "max-files",
-			usage:    "PR split threshold for files",
+			flagName: "split-pr",
+			usage:    "enable PR split phase to split large PRs into smaller child PRs",
 		},
 		{
 			flagName: "claude-path",
@@ -1589,8 +1570,7 @@ func TestPersistentFlags_Modification(t *testing.T) {
 		setValue string
 	}{
 		{"base-dir", "/custom/path"},
-		{"max-lines", "200"},
-		{"max-files", "20"},
+		{"split-pr", "true"},
 		{"claude-path", "/custom/claude"},
 		{"dangerously-skip-permissions", "true"},
 		{"timeout-planning", "2h"},

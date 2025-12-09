@@ -1514,7 +1514,7 @@ func TestOrchestrator_Start(t *testing.T) {
 			o := &Orchestrator{
 				stateManager: mockSM,
 				config:       DefaultConfig("/tmp/workflows"),
-				logger:          NewLogger(LogLevelNormal),
+				logger:       NewLogger(LogLevelNormal),
 			}
 
 			err := o.Start(context.Background(), "test-workflow", "test description", WorkflowTypeFeature)
@@ -1670,7 +1670,7 @@ func TestOrchestrator_Resume(t *testing.T) {
 			o := &Orchestrator{
 				stateManager: mockSM,
 				config:       DefaultConfig("/tmp/workflows"),
-			logger:       NewLogger(LogLevelNormal),
+				logger:       NewLogger(LogLevelNormal),
 			}
 
 			err := o.Resume(context.Background(), "test-workflow")
@@ -1754,7 +1754,7 @@ func TestOrchestrator_Resume_RestoresFailedPhase(t *testing.T) {
 			o := &Orchestrator{
 				stateManager: mockSM,
 				config:       DefaultConfig("/tmp/workflows"),
-			logger:       NewLogger(LogLevelNormal),
+				logger:       NewLogger(LogLevelNormal),
 			}
 
 			// Resume will fail because SaveState returns error, but we verify state was correctly set
@@ -2229,8 +2229,7 @@ func TestDefaultConfig(t *testing.T) {
 	config := DefaultConfig(baseDir)
 
 	assert.Equal(t, baseDir, config.BaseDir)
-	assert.Equal(t, 100, config.MaxLines)
-	assert.Equal(t, 10, config.MaxFiles)
+	assert.Equal(t, false, config.SplitPR)
 	assert.Equal(t, "claude", config.ClaudePath)
 	assert.Equal(t, 1*time.Hour, config.Timeouts.Planning)
 	assert.Equal(t, 6*time.Hour, config.Timeouts.Implementation)
@@ -3386,7 +3385,7 @@ func TestGetCIChecker(t *testing.T) {
 
 			o := &Orchestrator{
 				config:           config,
-				logger:          NewLogger(LogLevelNormal),
+				logger:           NewLogger(LogLevelNormal),
 				ciCheckerFactory: tt.ciCheckerFactory,
 			}
 

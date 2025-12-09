@@ -14,8 +14,7 @@ import (
 // Config holds configuration for the orchestrator
 type Config struct {
 	BaseDir                    string
-	MaxLines                   int
-	MaxFiles                   int
+	SplitPR                    bool
 	Timeouts                   PhaseTimeouts
 	ClaudePath                 string
 	DangerouslySkipPermissions bool
@@ -38,8 +37,7 @@ type PhaseTimeouts struct {
 func DefaultConfig(baseDir string) *Config {
 	return &Config{
 		BaseDir:                    baseDir,
-		MaxLines:                   100,
-		MaxFiles:                   10,
+		SplitPR:                    false,
 		ClaudePath:                 "claude",
 		DangerouslySkipPermissions: false,
 		CICheckInterval:            30 * time.Second,
@@ -131,6 +129,12 @@ func (o *Orchestrator) Start(ctx context.Context, name, description string, wfTy
 	state, err := o.stateManager.InitState(name, description, wfType)
 	if err != nil {
 		return fmt.Errorf("failed to initialize workflow: %w", err)
+	}
+
+	state.SplitPR = o.config.SplitPR
+
+	if err := o.stateManager.SaveState(name, state); err != nil {
+		return fmt.Errorf("failed to save state: %w", err)
 	}
 
 	return o.runWorkflow(ctx, state)
@@ -238,7 +242,7 @@ func (o *Orchestrator) runWorkflow(ctx context.Context, state *WorkflowState) er
 	o.logger.Verbose("Configuration:")
 	o.logger.Verbose("  Base directory: %s", o.config.BaseDir)
 	o.logger.Verbose("  Claude path: %s", o.config.ClaudePath)
-	o.logger.Verbose("  Max PR lines: %d, Max PR files: %d", o.config.MaxLines, o.config.MaxFiles)
+	o.logger.Verbose("  Split PR enabled: %v", o.config.SplitPR)
 	o.logger.Verbose("  Timeouts: planning=%s, impl=%s, refactor=%s, pr-split=%s",
 		FormatDuration(o.config.Timeouts.Planning),
 		FormatDuration(o.config.Timeouts.Implementation),
@@ -702,30 +706,23 @@ func (o *Orchestrator) executeRefactoring(ctx context.Context, state *WorkflowSt
 		}
 	}
 
-	metrics, err := o.getPRMetrics(ctx, state.WorktreePath)
-	if err != nil {
-		return o.failWorkflow(state, fmt.Errorf("failed to get PR metrics: %w", err))
-	}
+	if state.SplitPR {
+		// Collect PR metrics for the split prompt
+		metrics, err := o.getPRMetrics(ctx, state.WorktreePath)
+		if err != nil {
+			return o.failWorkflow(state, fmt.Errorf("failed to get PR metrics: %w", err))
+		}
 
-	o.logger.Verbose("PR metrics: %d files changed, %d lines changed", metrics.FilesChanged, metrics.LinesChanged)
+		prSplitPhase := state.Phases[PhasePRSplit]
+		prSplitPhase.Metrics = metrics
 
-	prSplitPhase := state.Phases[PhasePRSplit]
-	prSplitPhase.Metrics = metrics
+		o.logger.Verbose("PR split enabled, transitioning to PR split phase (lines: %d, files: %d)",
+			metrics.LinesChanged, metrics.FilesChanged)
 
-	needsPRSplit := metrics.LinesChanged > o.config.MaxLines || metrics.FilesChanged > o.config.MaxFiles
-	required := needsPRSplit
-	prSplitPhase.Required = &required
+		if err := o.stateManager.SaveState(state.Name, state); err != nil {
+			return fmt.Errorf("failed to save state: %w", err)
+		}
 
-	o.logger.Verbose("PR split needed: %v (lines: %d/%d, files: %d/%d)",
-		needsPRSplit,
-		metrics.LinesChanged, o.config.MaxLines,
-		metrics.FilesChanged, o.config.MaxFiles)
-
-	if err := o.stateManager.SaveState(state.Name, state); err != nil {
-		return fmt.Errorf("failed to save state: %w", err)
-	}
-
-	if needsPRSplit {
 		return o.transitionPhase(state, PhasePRSplit)
 	}
 

@@ -12,8 +12,7 @@ import (
 
 var (
 	baseDir                    string
-	maxLines                   int
-	maxFiles                   int
+	splitPR                    bool
 	claudePath                 string
 	dangerouslySkipPermissions bool
 	timeoutPlanning            time.Duration
@@ -37,8 +36,7 @@ func newRootCmd() *cobra.Command {
 	}
 
 	rootCmd.PersistentFlags().StringVar(&baseDir, "base-dir", ".claude/workflow", "base directory for workflows")
-	rootCmd.PersistentFlags().IntVar(&maxLines, "max-lines", 100, "PR split threshold for lines")
-	rootCmd.PersistentFlags().IntVar(&maxFiles, "max-files", 10, "PR split threshold for files")
+	rootCmd.PersistentFlags().BoolVar(&splitPR, "split-pr", false, "enable PR split phase to split large PRs into smaller child PRs")
 	rootCmd.PersistentFlags().StringVar(&claudePath, "claude-path", "claude", "path to claude CLI")
 	rootCmd.PersistentFlags().BoolVar(&dangerouslySkipPermissions, "dangerously-skip-permissions", false, "skip all permission prompts in Claude Code (use with caution)")
 	rootCmd.PersistentFlags().DurationVar(&timeoutPlanning, "timeout-planning", 1*time.Hour, "planning phase timeout")
@@ -59,8 +57,7 @@ func newRootCmd() *cobra.Command {
 
 func createOrchestrator() (*workflow.Orchestrator, error) {
 	config := workflow.DefaultConfig(baseDir)
-	config.MaxLines = maxLines
-	config.MaxFiles = maxFiles
+	config.SplitPR = splitPR
 	config.ClaudePath = claudePath
 	config.DangerouslySkipPermissions = dangerouslySkipPermissions
 	config.Timeouts = workflow.PhaseTimeouts{
