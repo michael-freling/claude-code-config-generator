@@ -16,6 +16,28 @@ fi
 
 echo "pre-commit version: $(pre-commit --version)"
 
+# Check if golangci-lint is installed
+if ! command -v golangci-lint &> /dev/null; then
+    echo "ERROR: golangci-lint is not installed"
+    echo "Please install golangci-lint v2.0+:"
+    echo "  - Using go install: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"
+    echo "  - Using homebrew: brew install golangci-lint"
+    echo "  - See https://golangci-lint.run/welcome/install/ for more options"
+    exit 1
+fi
+
+echo "golangci-lint version: $(golangci-lint version 2>&1 | head -1)"
+
+# Check if goimports is installed
+if ! command -v goimports &> /dev/null; then
+    echo "ERROR: goimports is not installed"
+    echo "Please install goimports:"
+    echo "  - Using go install: go install golang.org/x/tools/cmd/goimports@latest"
+    exit 1
+fi
+
+echo "goimports installed: $(which goimports)"
+
 # Install pre-commit hooks (idempotent)
 echo "Installing pre-commit hooks..."
 pre-commit install

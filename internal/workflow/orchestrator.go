@@ -574,11 +574,6 @@ func (o *Orchestrator) executeImplementation(ctx context.Context, state *Workflo
 		lastError = formatCIErrors(ciResult)
 		displayCIFailure(ciResult)
 
-		prompt, err = o.promptGenerator.GenerateFixCIPrompt(lastError)
-		if err != nil {
-			return o.failWorkflow(state, fmt.Errorf("failed to generate CI fix prompt: %w", err))
-		}
-
 		if err := o.stateManager.SaveState(state.Name, state); err != nil {
 			return fmt.Errorf("failed to save state: %w", err)
 		}
@@ -723,11 +718,6 @@ func (o *Orchestrator) executeRefactoring(ctx context.Context, state *WorkflowSt
 
 		lastError = formatCIErrors(ciResult)
 		displayCIFailure(ciResult)
-
-		prompt, err = o.promptGenerator.GenerateFixCIPrompt(lastError)
-		if err != nil {
-			return o.failWorkflow(state, fmt.Errorf("failed to generate CI fix prompt: %w", err))
-		}
 
 		if err := o.stateManager.SaveState(state.Name, state); err != nil {
 			return fmt.Errorf("failed to save state: %w", err)

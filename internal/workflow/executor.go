@@ -340,7 +340,7 @@ func (e *claudeExecutor) ExecuteStreaming(ctx context.Context, config ExecuteCon
 
 	// Extract output from final chunk
 	if finalChunk != nil {
-		if finalChunk.StructuredOutput != nil && len(finalChunk.StructuredOutput) > 0 {
+		if len(finalChunk.StructuredOutput) > 0 {
 			// Wrap structured output in the expected envelope format
 			envelope := map[string]interface{}{
 				"type":              "result",

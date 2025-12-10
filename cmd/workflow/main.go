@@ -146,7 +146,7 @@ func newListCmd() *cobra.Command {
 				workflow.Bold("UPDATED"),
 			)
 			for _, wf := range workflows {
-				statusStr := wf.Status
+				var statusStr string
 				switch wf.Status {
 				case "completed":
 					statusStr = workflow.Green(wf.Status)
