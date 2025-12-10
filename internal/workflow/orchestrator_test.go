@@ -817,7 +817,7 @@ func TestOrchestrator_executeImplementation_CIRetryLoop(t *testing.T) {
 					FailedJobs: []string{"test-job"},
 				}, nil).Once()
 
-				pg.On("GenerateFixCIPrompt", mock.Anything).Return("fix CI prompt", nil).Times(2)
+				pg.On("GenerateFixCIPrompt", mock.Anything).Return("fix CI prompt", nil).Once()
 				exec.On("ExecuteStreaming", mock.Anything, mock.Anything, mock.Anything).Return(&ExecuteResult{
 					Output:   "```json\n{\"summary\": \"fixed\"}\n```",
 					ExitCode: 0,
@@ -857,7 +857,7 @@ func TestOrchestrator_executeImplementation_CIRetryLoop(t *testing.T) {
 					FailedJobs: []string{"test-job"},
 				}, nil).Times(2)
 
-				pg.On("GenerateFixCIPrompt", mock.Anything).Return("fix CI prompt", nil).Times(3)
+				pg.On("GenerateFixCIPrompt", mock.Anything).Return("fix CI prompt", nil).Once()
 			},
 			wantErr:       true,
 			wantNextPhase: PhaseFailed,
@@ -1152,7 +1152,7 @@ func TestOrchestrator_executeRefactoring_CIRetryLoop(t *testing.T) {
 					FailedJobs: []string{"test-job"},
 				}, nil).Times(2)
 
-				pg.On("GenerateFixCIPrompt", mock.Anything).Return("fix CI prompt", nil).Times(3)
+				pg.On("GenerateFixCIPrompt", mock.Anything).Return("fix CI prompt", nil).Once()
 			},
 			wantErr:       true,
 			wantNextPhase: PhaseFailed,
@@ -1180,9 +1180,6 @@ func TestOrchestrator_executeRefactoring_CIRetryLoop(t *testing.T) {
 					Output:     "still failing",
 					FailedJobs: []string{"test-job"},
 				}, nil).Once()
-
-				// GenerateFixCIPrompt called once more before exceeding max attempts
-				pg.On("GenerateFixCIPrompt", mock.Anything).Return("fix CI prompt", nil).Once()
 			},
 			wantErr:       true,
 			wantNextPhase: PhaseFailed,
