@@ -65,6 +65,7 @@ type Orchestrator struct {
 	worktreeManager WorktreeManager
 	logger          Logger
 	ghRunner        GhRunner
+	gitRunner       GitRunner
 	splitManager    PRSplitManager
 
 	// For testing - if nil, creates real checker
@@ -111,6 +112,7 @@ func NewOrchestratorWithConfig(config *Config) (*Orchestrator, error) {
 		worktreeManager: worktreeManager,
 		logger:          logger,
 		ghRunner:        ghRunner,
+		gitRunner:       gitRunner,
 		splitManager:    splitManager,
 	}, nil
 }
@@ -934,16 +936,12 @@ func (o *Orchestrator) executePRSplit(ctx context.Context, state *WorkflowState)
 
 // getSourceBranch gets the current branch as the source branch
 func (o *Orchestrator) getSourceBranch(ctx context.Context, dir string) (string, error) {
-	cmdRunner := NewCommandRunner()
-	gitRunner := NewGitRunner(cmdRunner)
-	return gitRunner.GetCurrentBranch(ctx, dir)
+	return o.gitRunner.GetCurrentBranch(ctx, dir)
 }
 
 // getCommits gets commits from the base branch to HEAD
 func (o *Orchestrator) getCommits(ctx context.Context, dir string, base string) ([]Commit, error) {
-	cmdRunner := NewCommandRunner()
-	gitRunner := NewGitRunner(cmdRunner)
-	return gitRunner.GetCommits(ctx, dir, base)
+	return o.gitRunner.GetCommits(ctx, dir, base)
 }
 
 // transitionPhase transitions the workflow to the next phase

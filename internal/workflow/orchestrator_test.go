@@ -1320,13 +1320,13 @@ func TestOrchestrator_executePhase(t *testing.T) {
 	tests := []struct {
 		name       string
 		phase      Phase
-		setupMocks func(*MockStateManager, *MockClaudeExecutor, *MockPromptGenerator, *MockOutputParser, *MockCIChecker, *MockWorktreeManager)
+		setupMocks func(*MockStateManager, *MockClaudeExecutor, *MockPromptGenerator, *MockOutputParser, *MockCIChecker, *MockWorktreeManager, *MockGitRunner)
 		wantErr    bool
 	}{
 		{
 			name:  "executes PhasePlanning",
 			phase: PhasePlanning,
-			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser, ci *MockCIChecker, wm *MockWorktreeManager) {
+			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser, ci *MockCIChecker, wm *MockWorktreeManager, git *MockGitRunner) {
 				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
 				pg.On("GeneratePlanningPrompt", WorkflowTypeFeature, "test description", []string(nil)).Return("planning prompt", nil)
 				exec.On("ExecuteStreaming", mock.Anything, mock.Anything, mock.Anything).Return(&ExecuteResult{
@@ -1344,7 +1344,7 @@ func TestOrchestrator_executePhase(t *testing.T) {
 		{
 			name:  "executes PhaseConfirmation",
 			phase: PhaseConfirmation,
-			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser, ci *MockCIChecker, wm *MockWorktreeManager) {
+			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser, ci *MockCIChecker, wm *MockWorktreeManager, git *MockGitRunner) {
 				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil).Times(2)
 				sm.On("LoadPlan", "test-workflow").Return(&Plan{Summary: "test plan"}, nil)
 			},
@@ -1353,7 +1353,7 @@ func TestOrchestrator_executePhase(t *testing.T) {
 		{
 			name:  "executes PhaseImplementation",
 			phase: PhaseImplementation,
-			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser, ci *MockCIChecker, wm *MockWorktreeManager) {
+			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser, ci *MockCIChecker, wm *MockWorktreeManager, git *MockGitRunner) {
 				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
 				wm.On("CreateWorktree", "test-workflow").Return("/tmp/worktrees/test-workflow", nil)
 				sm.On("LoadPlan", "test-workflow").Return(&Plan{Summary: "test plan"}, nil)
@@ -1373,8 +1373,12 @@ func TestOrchestrator_executePhase(t *testing.T) {
 		{
 			name:  "executes PhasePRSplit",
 			phase: PhasePRSplit,
-			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser, ci *MockCIChecker, wm *MockWorktreeManager) {
+			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser, ci *MockCIChecker, wm *MockWorktreeManager, git *MockGitRunner) {
 				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
+				git.On("GetCurrentBranch", mock.Anything, mock.Anything).Return("feature-branch", nil)
+				git.On("GetCommits", mock.Anything, mock.Anything, "main").Return([]Commit{
+					{Hash: "abc123", Subject: "feat: add feature"},
+				}, nil)
 				pg.On("GeneratePRSplitPrompt", mock.Anything, mock.Anything).Return("pr split prompt", nil)
 				exec.On("ExecuteStreaming", mock.Anything, mock.Anything, mock.Anything).Return(&ExecuteResult{
 					Output:   "```json\n{\"strategy\":\"commits\",\"parentTitle\":\"Parent\",\"parentDescription\":\"Desc\",\"summary\":\"Split\",\"childPRs\":[]}\n```",
@@ -1397,8 +1401,9 @@ func TestOrchestrator_executePhase(t *testing.T) {
 			mockCI := new(MockCIChecker)
 			mockWM := new(MockWorktreeManager)
 			mockSplitMgr := new(MockPRSplitManager)
+			mockGit := new(MockGitRunner)
 
-			tt.setupMocks(mockSM, mockExec, mockPG, mockOP, mockCI, mockWM)
+			tt.setupMocks(mockSM, mockExec, mockPG, mockOP, mockCI, mockWM, mockGit)
 
 			if tt.phase == PhasePRSplit {
 				mockSplitMgr.On("ExecuteSplit", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(&PRSplitResult{
@@ -1416,6 +1421,7 @@ func TestOrchestrator_executePhase(t *testing.T) {
 				config:          DefaultConfig("/tmp/workflows"),
 				logger:          NewLogger(LogLevelNormal),
 				worktreeManager: mockWM,
+				gitRunner:       mockGit,
 				splitManager:    mockSplitMgr,
 				confirmFunc: func(plan *Plan) (bool, string, error) {
 					return true, "", nil
@@ -2786,14 +2792,18 @@ func TestOrchestrator_executeRefactoring(t *testing.T) {
 func TestOrchestrator_executePRSplit(t *testing.T) {
 	tests := []struct {
 		name          string
-		setupMocks    func(*MockStateManager, *MockClaudeExecutor, *MockPromptGenerator, *MockOutputParser)
+		setupMocks    func(*MockStateManager, *MockClaudeExecutor, *MockPromptGenerator, *MockOutputParser, *MockGitRunner)
 		wantErr       bool
 		wantNextPhase Phase
 	}{
 		{
 			name: "successfully splits PR",
-			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser) {
+			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser, git *MockGitRunner) {
 				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
+				git.On("GetCurrentBranch", mock.Anything, mock.Anything).Return("feature-branch", nil)
+				git.On("GetCommits", mock.Anything, mock.Anything, "main").Return([]Commit{
+					{Hash: "abc123", Subject: "feat: add feature"},
+				}, nil)
 				pg.On("GeneratePRSplitPrompt", mock.Anything, mock.Anything).Return("pr-split prompt", nil)
 				exec.On("ExecuteStreaming", mock.Anything, mock.Anything, mock.Anything).Return(&ExecuteResult{
 					Output:   "```json\n{\"strategy\":\"commits\",\"parentTitle\":\"Parent\",\"parentDescription\":\"Desc\",\"summary\":\"split complete\",\"childPRs\":[]}\n```",
@@ -2808,7 +2818,7 @@ func TestOrchestrator_executePRSplit(t *testing.T) {
 		},
 		{
 			name: "fails when metrics not available",
-			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser) {
+			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser, git *MockGitRunner) {
 				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
 			},
 			wantErr:       true,
@@ -2823,8 +2833,9 @@ func TestOrchestrator_executePRSplit(t *testing.T) {
 			mockPG := new(MockPromptGenerator)
 			mockOP := new(MockOutputParser)
 			mockSplitMgr := new(MockPRSplitManager)
+			mockGit := new(MockGitRunner)
 
-			tt.setupMocks(mockSM, mockExec, mockPG, mockOP)
+			tt.setupMocks(mockSM, mockExec, mockPG, mockOP, mockGit)
 
 			if tt.name == "successfully splits PR" {
 				mockSplitMgr.On("ExecuteSplit", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(&PRSplitResult{
@@ -2839,6 +2850,7 @@ func TestOrchestrator_executePRSplit(t *testing.T) {
 				executor:        mockExec,
 				promptGenerator: mockPG,
 				parser:          mockOP,
+				gitRunner:       mockGit,
 				splitManager:    mockSplitMgr,
 				config:          DefaultConfig("/tmp/workflows"),
 				logger:          NewLogger(LogLevelNormal),
@@ -2889,10 +2901,15 @@ func TestOrchestrator_executePRSplit_CIFailureRetry(t *testing.T) {
 	mockOP := new(MockOutputParser)
 	mockCI := new(MockCIChecker)
 	mockSplitMgr := new(MockPRSplitManager)
+	mockGit := new(MockGitRunner)
 
 	// Setup: first attempt splits PR, CI fails on child PR
 	// second attempt uses GenerateFixCIPrompt, CI passes
 	mockSM.On("SaveState", "test-workflow", mock.Anything).Return(nil)
+	mockGit.On("GetCurrentBranch", mock.Anything, mock.Anything).Return("feature-branch", nil)
+	mockGit.On("GetCommits", mock.Anything, mock.Anything, "main").Return([]Commit{
+		{Hash: "abc123", Subject: "feat: add feature"},
+	}, nil)
 
 	// First attempt: GeneratePRSplitPrompt
 	mockPG.On("GeneratePRSplitPrompt", mock.Anything, mock.Anything).Return("pr-split prompt", nil).Once()
@@ -2954,6 +2971,7 @@ func TestOrchestrator_executePRSplit_CIFailureRetry(t *testing.T) {
 		executor:        mockExec,
 		promptGenerator: mockPG,
 		parser:          mockOP,
+		gitRunner:       mockGit,
 		splitManager:    mockSplitMgr,
 		config:          config,
 		logger:          NewLogger(LogLevelNormal),
