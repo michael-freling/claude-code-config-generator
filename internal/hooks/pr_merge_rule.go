@@ -5,6 +5,12 @@ import (
 	"strings"
 )
 
+var (
+	prURLPattern    = regexp.MustCompile(`/pull/(\d+)`)
+	prNumberPattern = regexp.MustCompile(`^\d+$`)
+	apiMergePattern = regexp.MustCompile(`repos/[^/]+/[^/]+/pulls/(\d+)/merge`)
+)
+
 // prMergeRule blocks PR merge commands to main/master branches.
 type prMergeRule struct {
 	ghHelper GhHelper
@@ -102,15 +108,14 @@ func extractPRNumberFromPRMerge(command string) string {
 		// Check if it's a GitHub URL
 		if strings.Contains(token, "github.com") {
 			// Extract PR number from URL like https://github.com/owner/repo/pull/123
-			re := regexp.MustCompile(`/pull/(\d+)`)
-			matches := re.FindStringSubmatch(token)
+			matches := prURLPattern.FindStringSubmatch(token)
 			if len(matches) > 1 {
 				return matches[1]
 			}
 		} else {
 			// Assume it's a PR number
 			// Validate it's numeric
-			if regexp.MustCompile(`^\d+$`).MatchString(token) {
+			if prNumberPattern.MatchString(token) {
 				return token
 			}
 		}
@@ -140,8 +145,7 @@ func extractPRNumberFromApiMerge(command string) string {
 	}
 
 	// Look for repos/.../pulls/<number>/merge pattern
-	re := regexp.MustCompile(`repos/[^/]+/[^/]+/pulls/(\d+)/merge`)
-	matches := re.FindStringSubmatch(command)
+	matches := apiMergePattern.FindStringSubmatch(command)
 	if len(matches) > 1 {
 		return matches[1]
 	}

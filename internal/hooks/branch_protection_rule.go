@@ -4,6 +4,8 @@ import (
 	"regexp"
 )
 
+var branchProtectionPattern = regexp.MustCompile(`/repos/[^/]+/[^/]+/branches/.+/protection`)
+
 // branchProtectionRule blocks gh api commands that modify branch protections.
 type branchProtectionRule struct{}
 
@@ -59,6 +61,5 @@ func isModifyingBranchProtection(command string) bool {
 
 // hasBranchProtectionEndpoint checks if the command targets a branch protection endpoint.
 func hasBranchProtectionEndpoint(command string) bool {
-	pattern := regexp.MustCompile(`/repos/[^/]+/[^/]+/branches/.+/protection`)
-	return pattern.MatchString(command)
+	return branchProtectionPattern.MatchString(command)
 }

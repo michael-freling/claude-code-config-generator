@@ -1,9 +1,5 @@
 package hooks
 
-import (
-	"strings"
-)
-
 // noVerifyRule blocks Bash commands containing the --no-verify flag.
 type noVerifyRule struct{}
 
@@ -46,43 +42,11 @@ func (r *noVerifyRule) Evaluate(input *ToolInput) (*RuleResult, error) {
 // containsNoVerifyFlag checks if a command contains the --no-verify flag.
 // It performs basic parsing to avoid false positives in string literals.
 func containsNoVerifyFlag(command string) bool {
-	inSingleQuote := false
-	inDoubleQuote := false
-	var token strings.Builder
-
-	for i := 0; i < len(command); i++ {
-		ch := command[i]
-
-		switch ch {
-		case '\'':
-			if !inDoubleQuote {
-				inSingleQuote = !inSingleQuote
-			}
-			token.WriteByte(ch)
-		case '"':
-			if !inSingleQuote {
-				inDoubleQuote = !inDoubleQuote
-			}
-			token.WriteByte(ch)
-		case ' ', '\t', '\n', '\r':
-			if !inSingleQuote && !inDoubleQuote {
-				if checkToken(token.String()) {
-					return true
-				}
-				token.Reset()
-			} else {
-				token.WriteByte(ch)
-			}
-		default:
-			token.WriteByte(ch)
+	tokens := parseCommandTokens(command)
+	for _, token := range tokens {
+		if token == "--no-verify" {
+			return true
 		}
 	}
-
-	return checkToken(token.String())
-}
-
-// checkToken checks if a single token is --no-verify.
-func checkToken(token string) bool {
-	token = strings.TrimSpace(token)
-	return token == "--no-verify"
+	return false
 }

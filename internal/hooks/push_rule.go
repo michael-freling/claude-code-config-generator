@@ -4,6 +4,8 @@ import (
 	"strings"
 )
 
+const gitCommandArgsStartIndex = 2 // Skip "git" and subcommand
+
 // gitPushRule blocks git push commands to main/master branches.
 type gitPushRule struct {
 	gitHelper GitHelper
@@ -75,41 +77,16 @@ func (r *gitPushRule) Evaluate(input *ToolInput) (*RuleResult, error) {
 
 // isExplicitPushToProtectedBranch checks if the command explicitly pushes to main/master.
 func isExplicitPushToProtectedBranch(command string) bool {
-	// Parse the command to extract arguments
 	args := parseGitPushArgs(command)
 
-	// Look for branch name in the arguments
-	// Common patterns:
-	// git push origin main
-	// git push -u origin main
-	// git push --set-upstream origin main
-	// git push -f origin main
-	// git push --force origin main
+	flagsWithValues := []string{"--repo", "--exec", "--receive-pack"}
+	nonFlagArgs := findNonFlagArgs(args, gitCommandArgsStartIndex, flagsWithValues)
 
-	// Find the last argument that doesn't start with '-' and isn't a known flag value
-	var lastNonFlagArg string
-	skipNext := false
-
-	for i := 2; i < len(args); i++ { // Start from index 2 to skip "git" and "push"
-		arg := args[i]
-
-		if skipNext {
-			skipNext = false
-			continue
-		}
-
-		// Skip flags
-		if strings.HasPrefix(arg, "-") {
-			// Check if this flag takes a value
-			if arg == "--repo" || arg == "--exec" || arg == "--receive-pack" {
-				skipNext = true
-			}
-			continue
-		}
-
-		lastNonFlagArg = arg
+	if len(nonFlagArgs) == 0 {
+		return false
 	}
 
+	lastNonFlagArg := nonFlagArgs[len(nonFlagArgs)-1]
 	return isProtectedBranch(lastNonFlagArg)
 }
 
@@ -117,90 +94,16 @@ func isExplicitPushToProtectedBranch(command string) bool {
 func isImplicitPush(command string) bool {
 	args := parseGitPushArgs(command)
 
-	// Check if there's a non-flag, non-remote argument
-	// git push -> implicit
-	// git push origin -> implicit
-	// git push -u origin -> implicit
-	// git push origin feature -> explicit
+	flagsWithValues := []string{"--repo", "--exec", "--receive-pack"}
+	nonFlagArgs := findNonFlagArgs(args, gitCommandArgsStartIndex, flagsWithValues)
 
-	foundNonFlagArg := false
-	foundRemote := false
-	skipNext := false
-
-	for i := 2; i < len(args); i++ { // Start from index 2 to skip "git" and "push"
-		arg := args[i]
-
-		if skipNext {
-			skipNext = false
-			continue
-		}
-
-		// Skip flags
-		if strings.HasPrefix(arg, "-") {
-			// Check if this flag takes a value
-			if arg == "--repo" || arg == "--exec" || arg == "--receive-pack" {
-				skipNext = true
-			}
-			continue
-		}
-
-		if !foundRemote {
-			// First non-flag arg is typically the remote
-			foundRemote = true
-			continue
-		}
-
-		// Second non-flag arg would be the branch
-		foundNonFlagArg = true
-		break
-	}
-
-	// If we found a second non-flag arg, it's explicit
-	// Otherwise, it's implicit
-	return !foundNonFlagArg
+	// If we have 0 or 1 non-flag args (no args, or just remote), it's implicit
+	// If we have 2+ non-flag args (remote and branch), it's explicit
+	return len(nonFlagArgs) < 2
 }
 
 // parseGitPushArgs parses a git push command into arguments.
-// This is a simple parser that handles basic quoting.
+// This is a simple parser that handles basic quoting and strips quotes.
 func parseGitPushArgs(command string) []string {
-	var args []string
-	var current strings.Builder
-	inSingleQuote := false
-	inDoubleQuote := false
-
-	for i := 0; i < len(command); i++ {
-		ch := command[i]
-
-		switch ch {
-		case '\'':
-			if !inDoubleQuote {
-				inSingleQuote = !inSingleQuote
-			} else {
-				current.WriteByte(ch)
-			}
-		case '"':
-			if !inSingleQuote {
-				inDoubleQuote = !inDoubleQuote
-			} else {
-				current.WriteByte(ch)
-			}
-		case ' ', '\t', '\n', '\r':
-			if !inSingleQuote && !inDoubleQuote {
-				if current.Len() > 0 {
-					args = append(args, current.String())
-					current.Reset()
-				}
-			} else {
-				current.WriteByte(ch)
-			}
-		default:
-			current.WriteByte(ch)
-		}
-	}
-
-	if current.Len() > 0 {
-		args = append(args, current.String())
-	}
-
-	return args
+	return parseTokensStripQuotes(command)
 }

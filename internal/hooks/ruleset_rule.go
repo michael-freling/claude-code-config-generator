@@ -4,6 +4,11 @@ import (
 	"regexp"
 )
 
+var (
+	repoRulesetPattern = regexp.MustCompile(`/repos/[^/]+/[^/]+/rulesets`)
+	orgRulesetPattern  = regexp.MustCompile(`/orgs/[^/]+/rulesets`)
+)
+
 // rulesetRule blocks gh api commands that modify repository rulesets.
 type rulesetRule struct{}
 
@@ -59,7 +64,5 @@ func isModifyingRuleset(command string) bool {
 
 // hasRulesetEndpoint checks if the command targets a ruleset endpoint.
 func hasRulesetEndpoint(command string) bool {
-	repoPattern := regexp.MustCompile(`/repos/[^/]+/[^/]+/rulesets`)
-	orgPattern := regexp.MustCompile(`/orgs/[^/]+/rulesets`)
-	return repoPattern.MatchString(command) || orgPattern.MatchString(command)
+	return repoRulesetPattern.MatchString(command) || orgRulesetPattern.MatchString(command)
 }
