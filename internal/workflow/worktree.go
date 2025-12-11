@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/michael-freling/claude-code-tools/internal/command"
 )
 
 // WorktreeManager handles git worktree operations
@@ -17,20 +19,20 @@ type WorktreeManager interface {
 // worktreeManager implements WorktreeManager interface
 type worktreeManager struct {
 	baseDir   string
-	gitRunner GitRunner
+	gitRunner command.GitRunner
 }
 
 // NewWorktreeManager creates a new worktree manager
 func NewWorktreeManager(baseDir string) WorktreeManager {
-	cmdRunner := NewCommandRunner()
+	cmdRunner := command.NewRunner()
 	return &worktreeManager{
 		baseDir:   baseDir,
-		gitRunner: NewGitRunner(cmdRunner),
+		gitRunner: command.NewGitRunner(cmdRunner),
 	}
 }
 
 // NewWorktreeManagerWithRunner creates a new worktree manager with a custom GitRunner
-func NewWorktreeManagerWithRunner(baseDir string, gitRunner GitRunner) WorktreeManager {
+func NewWorktreeManagerWithRunner(baseDir string, gitRunner command.GitRunner) WorktreeManager {
 	return &worktreeManager{
 		baseDir:   baseDir,
 		gitRunner: gitRunner,

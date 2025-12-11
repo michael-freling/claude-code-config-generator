@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/michael-freling/claude-code-tools/internal/command"
 )
 
 // ciCheck represents a single CI check from gh pr checks --json output
@@ -62,7 +64,7 @@ type ciChecker struct {
 	checkInterval  time.Duration
 	commandTimeout time.Duration
 	initialDelay   time.Duration
-	ghRunner       GhRunner
+	ghRunner       command.GhRunner
 }
 
 // NewCIChecker creates a new CI checker
@@ -73,13 +75,13 @@ func NewCIChecker(workingDir string, checkInterval time.Duration, commandTimeout
 	if commandTimeout == 0 {
 		commandTimeout = 2 * time.Minute
 	}
-	cmdRunner := NewCommandRunner()
+	cmdRunner := command.NewRunner()
 	return &ciChecker{
 		workingDir:     workingDir,
 		checkInterval:  checkInterval,
 		commandTimeout: commandTimeout,
 		initialDelay:   1 * time.Minute,
-		ghRunner:       NewGhRunner(cmdRunner),
+		ghRunner:       command.NewGhRunner(cmdRunner),
 	}
 }
 
@@ -94,18 +96,18 @@ func NewCICheckerWithOptions(workingDir string, checkInterval, commandTimeout, i
 	if initialDelay == 0 {
 		initialDelay = 1 * time.Minute
 	}
-	cmdRunner := NewCommandRunner()
+	cmdRunner := command.NewRunner()
 	return &ciChecker{
 		workingDir:     workingDir,
 		checkInterval:  checkInterval,
 		commandTimeout: commandTimeout,
 		initialDelay:   initialDelay,
-		ghRunner:       NewGhRunner(cmdRunner),
+		ghRunner:       command.NewGhRunner(cmdRunner),
 	}
 }
 
 // NewCICheckerWithRunner creates a new CI checker with injected GhRunner (for testing)
-func NewCICheckerWithRunner(workingDir string, checkInterval, commandTimeout, initialDelay time.Duration, ghRunner GhRunner) CIChecker {
+func NewCICheckerWithRunner(workingDir string, checkInterval, commandTimeout, initialDelay time.Duration, ghRunner command.GhRunner) CIChecker {
 	if checkInterval == 0 {
 		checkInterval = 30 * time.Second
 	}

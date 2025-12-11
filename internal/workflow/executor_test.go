@@ -10,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/michael-freling/claude-code-tools/internal/command"
 )
 
 // mockExecutor is a mock implementation of ClaudeExecutor for testing
@@ -853,7 +855,7 @@ func TestNewClaudeExecutorWithRunner(t *testing.T) {
 func TestClaudeExecutor_Execute_ClaudeNotFound(t *testing.T) {
 	executor := &claudeExecutor{
 		claudePath: "",
-		cmdRunner:  NewCommandRunner(),
+		cmdRunner:  command.NewRunner(),
 	}
 
 	// Temporarily override PATH to ensure claude isn't found
@@ -875,7 +877,7 @@ func TestClaudeExecutor_Execute_ClaudeNotFound(t *testing.T) {
 func TestClaudeExecutor_ExecuteStreaming_ClaudeNotFound(t *testing.T) {
 	executor := &claudeExecutor{
 		claudePath: "",
-		cmdRunner:  NewCommandRunner(),
+		cmdRunner:  command.NewRunner(),
 	}
 
 	oldPath := os.Getenv("PATH")
