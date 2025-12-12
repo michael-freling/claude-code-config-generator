@@ -5,8 +5,8 @@ import (
 )
 
 var (
-	repoRulesetPattern = regexp.MustCompile(`/repos/[^/]+/[^/]+/rulesets`)
-	orgRulesetPattern  = regexp.MustCompile(`/orgs/[^/]+/rulesets`)
+	repoRulesetPattern = regexp.MustCompile(`/?repos/[^/]+/[^/]+/rulesets`)
+	orgRulesetPattern  = regexp.MustCompile(`/?orgs/[^/]+/rulesets`)
 )
 
 // rulesetRule blocks gh api commands that modify repository rulesets.
@@ -59,7 +59,7 @@ func isModifyingRuleset(command string) bool {
 	}
 
 	method := extractHTTPMethod(command)
-	return method == "DELETE" || method == "PUT" || method == "PATCH"
+	return method == "DELETE" || method == "PUT" || method == "PATCH" || method == "POST"
 }
 
 // hasRulesetEndpoint checks if the command targets a ruleset endpoint.
