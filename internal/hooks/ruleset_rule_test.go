@@ -195,25 +195,25 @@ func TestRulesetRule_Evaluate_AllowGetRequests(t *testing.T) {
 	}
 }
 
-func TestRulesetRule_Evaluate_AllowPostRequests(t *testing.T) {
+func TestRulesetRule_Evaluate_BlockPostRequests(t *testing.T) {
 	tests := []struct {
 		name    string
 		command string
 	}{
 		{
-			name:    "allow POST to repo rulesets",
+			name:    "block POST to repo rulesets",
 			command: "gh api -X POST /repos/owner/repo/rulesets -f data='test'",
 		},
 		{
-			name:    "allow --method POST to repo rulesets",
+			name:    "block --method POST to repo rulesets",
 			command: "gh api --method POST /repos/owner/repo/rulesets -f data='test'",
 		},
 		{
-			name:    "allow POST to org rulesets",
+			name:    "block POST to org rulesets",
 			command: "gh api -X POST /orgs/myorg/rulesets -f data='test'",
 		},
 		{
-			name:    "allow --method POST to org rulesets",
+			name:    "block --method POST to org rulesets",
 			command: "gh api --method POST /orgs/myorg/rulesets -f data='test'",
 		},
 	}
@@ -229,7 +229,9 @@ func TestRulesetRule_Evaluate_AllowPostRequests(t *testing.T) {
 
 			got, err := rule.Evaluate(toolInput)
 			require.NoError(t, err)
-			assert.True(t, got.Allowed)
+			assert.False(t, got.Allowed)
+			assert.Equal(t, "gh-ruleset", got.RuleName)
+			assert.Equal(t, "Modifying repository rulesets via gh api is not allowed", got.Message)
 		})
 	}
 }
