@@ -1,8 +1,11 @@
 package hooks
 
 import (
+	"context"
 	"regexp"
 	"strings"
+
+	"github.com/michael-freling/claude-code-tools/internal/command"
 )
 
 var (
@@ -13,13 +16,13 @@ var (
 
 // prMergeRule blocks PR merge commands to main/master branches.
 type prMergeRule struct {
-	ghHelper GhHelper
+	ghRunner command.GhRunner
 }
 
 // NewPRMergeRule creates a new rule that blocks PR merges to main/master branches.
-func NewPRMergeRule(ghHelper GhHelper) Rule {
+func NewPRMergeRule(ghRunner command.GhRunner) Rule {
 	return &prMergeRule{
-		ghHelper: ghHelper,
+		ghRunner: ghRunner,
 	}
 }
 
@@ -51,7 +54,7 @@ func (r *prMergeRule) Evaluate(input *ToolInput) (*RuleResult, error) {
 		return NewAllowedResult(), nil
 	}
 
-	baseBranch, err := r.ghHelper.GetPRBaseBranch(prNumber)
+	baseBranch, err := r.ghRunner.GetPRBaseBranch(context.Background(), "", prNumber)
 	if err != nil {
 		// Fail open - allow the command if we can't determine the base branch
 		return NewAllowedResult(), nil

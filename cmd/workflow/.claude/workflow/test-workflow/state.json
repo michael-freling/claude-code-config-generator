@@ -1,25 +1,23 @@
 {
   "version": "1.0",
   "name": "test-workflow",
-  "type": "fix",
+  "type": "feature",
   "description": "test description",
-  "currentPhase": "FAILED",
-  "createdAt": "2025-12-11T07:50:42.06108878-08:00",
-  "updatedAt": "2025-12-11T07:54:30.432351852-08:00",
+  "currentPhase": "PLANNING",
+  "createdAt": "2025-12-11T11:32:04.629494649-08:00",
+  "updatedAt": "2025-12-11T11:32:04.653216552-08:00",
   "phases": {
     "CONFIRMATION": {
-      "status": "failed",
-      "startedAt": "2025-12-11T07:54:30.427178436-08:00",
-      "attempts": 1
+      "status": "pending",
+      "attempts": 0
     },
     "IMPLEMENTATION": {
       "status": "pending",
       "attempts": 0
     },
     "PLANNING": {
-      "status": "completed",
-      "startedAt": "2025-12-11T07:50:42.071765824-08:00",
-      "completedAt": "2025-12-11T07:54:30.422163553-08:00",
+      "status": "in_progress",
+      "startedAt": "2025-12-11T11:32:04.653131549-08:00",
       "attempts": 1
     },
     "PR_SPLIT": {
@@ -30,12 +28,5 @@
       "status": "pending",
       "attempts": 0
     }
-  },
-  "error": {
-    "message": "confirmation failed: failed to read input",
-    "phase": "CONFIRMATION",
-    "timestamp": "2025-12-11T07:54:30.432327232-08:00",
-    "recoverable": true,
-    "failureType": "execution"
   }
 }

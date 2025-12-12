@@ -1,16 +1,22 @@
 package hooks
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
 
+	"github.com/michael-freling/claude-code-tools/internal/command"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 func TestNewGitPushRule(t *testing.T) {
-	mockGit := &MockGitHelper{}
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockGit := command.NewMockGitRunner(ctrl)
 	rule := NewGitPushRule(mockGit)
 	assert.NotNil(t, rule)
 	assert.Equal(t, "git-push", rule.Name())
@@ -42,7 +48,10 @@ func TestGitPushRule_Evaluate_NonBashTool(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockGit := &MockGitHelper{}
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockGit := command.NewMockGitRunner(ctrl)
 			rule := NewGitPushRule(mockGit)
 
 			jsonInput := `{"tool_name": "` + tt.toolName + `", "tool_input": {"command": "` + escapeJSON(tt.command) + `"}}`
@@ -54,7 +63,7 @@ func TestGitPushRule_Evaluate_NonBashTool(t *testing.T) {
 			require.NoError(t, err)
 			assert.True(t, got.Allowed)
 
-			mockGit.AssertNotCalled(t, "GetCurrentBranch")
+			// No expectations set, so gomock will verify no calls were made
 		})
 	}
 }
@@ -120,7 +129,10 @@ func TestGitPushRule_Evaluate_ExplicitPushToProtectedBranch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockGit := &MockGitHelper{}
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockGit := command.NewMockGitRunner(ctrl)
 			rule := NewGitPushRule(mockGit)
 
 			jsonInput := `{"tool_name": "Bash", "tool_input": {"command": "` + escapeJSON(tt.command) + `"}}`
@@ -134,7 +146,7 @@ func TestGitPushRule_Evaluate_ExplicitPushToProtectedBranch(t *testing.T) {
 			assert.Equal(t, "git-push", got.RuleName)
 			assert.Equal(t, "Direct push to main/master branch is not allowed", got.Message)
 
-			mockGit.AssertNotCalled(t, "GetCurrentBranch")
+			// No expectations set, so gomock will verify no calls were made
 		})
 	}
 }
@@ -189,8 +201,11 @@ func TestGitPushRule_Evaluate_ImplicitPushOnProtectedBranch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockGit := &MockGitHelper{}
-			mockGit.On("GetCurrentBranch").Return(tt.currentBranch, nil)
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockGit := command.NewMockGitRunner(ctrl)
+			mockGit.EXPECT().GetCurrentBranch(context.Background(), "").Return(tt.currentBranch, nil)
 			rule := NewGitPushRule(mockGit)
 
 			jsonInput := `{"tool_name": "Bash", "tool_input": {"command": "` + escapeJSON(tt.command) + `"}}`
@@ -203,8 +218,6 @@ func TestGitPushRule_Evaluate_ImplicitPushOnProtectedBranch(t *testing.T) {
 			assert.False(t, got.Allowed)
 			assert.Equal(t, "git-push", got.RuleName)
 			assert.Equal(t, "Direct push to main/master branch is not allowed", got.Message)
-
-			mockGit.AssertExpectations(t)
 		})
 	}
 }
@@ -244,8 +257,11 @@ func TestGitPushRule_Evaluate_ImplicitPushOnFeatureBranch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockGit := &MockGitHelper{}
-			mockGit.On("GetCurrentBranch").Return(tt.currentBranch, nil)
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockGit := command.NewMockGitRunner(ctrl)
+			mockGit.EXPECT().GetCurrentBranch(context.Background(), "").Return(tt.currentBranch, nil)
 			rule := NewGitPushRule(mockGit)
 
 			jsonInput := `{"tool_name": "Bash", "tool_input": {"command": "` + escapeJSON(tt.command) + `"}}`
@@ -256,8 +272,6 @@ func TestGitPushRule_Evaluate_ImplicitPushOnFeatureBranch(t *testing.T) {
 			got, err := rule.Evaluate(toolInput)
 			require.NoError(t, err)
 			assert.True(t, got.Allowed)
-
-			mockGit.AssertExpectations(t)
 		})
 	}
 }
@@ -291,7 +305,10 @@ func TestGitPushRule_Evaluate_ExplicitPushToFeatureBranch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockGit := &MockGitHelper{}
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockGit := command.NewMockGitRunner(ctrl)
 			rule := NewGitPushRule(mockGit)
 
 			jsonInput := `{"tool_name": "Bash", "tool_input": {"command": "` + escapeJSON(tt.command) + `"}}`
@@ -303,7 +320,7 @@ func TestGitPushRule_Evaluate_ExplicitPushToFeatureBranch(t *testing.T) {
 			require.NoError(t, err)
 			assert.True(t, got.Allowed)
 
-			mockGit.AssertNotCalled(t, "GetCurrentBranch")
+			// No expectations set, so gomock will verify no calls were made
 		})
 	}
 }
@@ -329,8 +346,11 @@ func TestGitPushRule_Evaluate_GetCurrentBranchError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockGit := &MockGitHelper{}
-			mockGit.On("GetCurrentBranch").Return("", errors.New("not in a git repository"))
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockGit := command.NewMockGitRunner(ctrl)
+			mockGit.EXPECT().GetCurrentBranch(context.Background(), "").Return("", errors.New("not in a git repository"))
 			rule := NewGitPushRule(mockGit)
 
 			jsonInput := `{"tool_name": "Bash", "tool_input": {"command": "` + escapeJSON(tt.command) + `"}}`
@@ -341,8 +361,6 @@ func TestGitPushRule_Evaluate_GetCurrentBranchError(t *testing.T) {
 			got, err := rule.Evaluate(toolInput)
 			require.NoError(t, err)
 			assert.True(t, got.Allowed, "should allow when GetCurrentBranch fails (fail open)")
-
-			mockGit.AssertExpectations(t)
 		})
 	}
 }
@@ -384,7 +402,10 @@ func TestGitPushRule_Evaluate_NonGitPushCommands(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockGit := &MockGitHelper{}
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockGit := command.NewMockGitRunner(ctrl)
 			rule := NewGitPushRule(mockGit)
 
 			jsonInput := `{"tool_name": "Bash", "tool_input": {"command": "` + escapeJSON(tt.command) + `"}}`
@@ -396,13 +417,16 @@ func TestGitPushRule_Evaluate_NonGitPushCommands(t *testing.T) {
 			require.NoError(t, err)
 			assert.True(t, got.Allowed)
 
-			mockGit.AssertNotCalled(t, "GetCurrentBranch")
+			// No expectations set, so gomock will verify no calls were made
 		})
 	}
 }
 
 func TestGitPushRule_Evaluate_NoCommandArg(t *testing.T) {
-	mockGit := &MockGitHelper{}
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockGit := command.NewMockGitRunner(ctrl)
 	rule := NewGitPushRule(mockGit)
 
 	jsonInput := `{"tool_name": "Bash", "tool_input": {}}`
@@ -414,7 +438,7 @@ func TestGitPushRule_Evaluate_NoCommandArg(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, got.Allowed)
 
-	mockGit.AssertNotCalled(t, "GetCurrentBranch")
+	// No expectations set, so gomock will verify no calls were made
 }
 
 func TestGitPushRule_Evaluate_QuotedBranchNames(t *testing.T) {
@@ -442,7 +466,10 @@ func TestGitPushRule_Evaluate_QuotedBranchNames(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockGit := &MockGitHelper{}
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockGit := command.NewMockGitRunner(ctrl)
 			rule := NewGitPushRule(mockGit)
 
 			jsonInput := `{"tool_name": "Bash", "tool_input": {"command": "` + escapeJSON(tt.command) + `"}}`
@@ -454,7 +481,7 @@ func TestGitPushRule_Evaluate_QuotedBranchNames(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantAllowed, got.Allowed)
 
-			mockGit.AssertNotCalled(t, "GetCurrentBranch")
+			// No expectations set, so gomock will verify no calls were made
 		})
 	}
 }

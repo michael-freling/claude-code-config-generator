@@ -1,20 +1,23 @@
 package hooks
 
 import (
+	"context"
 	"strings"
+
+	"github.com/michael-freling/claude-code-tools/internal/command"
 )
 
 const gitCommandArgsStartIndex = 2 // Skip "git" and subcommand
 
 // gitPushRule blocks git push commands to main/master branches.
 type gitPushRule struct {
-	gitHelper GitHelper
+	gitRunner command.GitRunner
 }
 
 // NewGitPushRule creates a new rule that blocks pushes to main/master branches.
-func NewGitPushRule(gitHelper GitHelper) Rule {
+func NewGitPushRule(gitRunner command.GitRunner) Rule {
 	return &gitPushRule{
-		gitHelper: gitHelper,
+		gitRunner: gitRunner,
 	}
 }
 
@@ -58,7 +61,7 @@ func (r *gitPushRule) Evaluate(input *ToolInput) (*RuleResult, error) {
 	// Check for implicit push (no branch specified)
 	if isImplicitPush(command) {
 		// Get current branch
-		currentBranch, err := r.gitHelper.GetCurrentBranch()
+		currentBranch, err := r.gitRunner.GetCurrentBranch(context.Background(), "")
 		if err != nil {
 			// Fail open - allow the command if we can't determine the branch
 			return NewAllowedResult(), nil

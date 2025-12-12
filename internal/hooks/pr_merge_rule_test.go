@@ -1,16 +1,22 @@
 package hooks
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
 
+	"github.com/michael-freling/claude-code-tools/internal/command"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 func TestNewPRMergeRule(t *testing.T) {
-	mockGh := &MockGhHelper{}
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockGh := command.NewMockGhRunner(ctrl)
 	rule := NewPRMergeRule(mockGh)
 	assert.NotNil(t, rule)
 	assert.Equal(t, "gh-pr-merge", rule.Name())
@@ -42,7 +48,10 @@ func TestPRMergeRule_Evaluate_NonBashTool(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockGh := &MockGhHelper{}
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockGh := command.NewMockGhRunner(ctrl)
 			rule := NewPRMergeRule(mockGh)
 
 			jsonInput := `{"tool_name": "` + tt.toolName + `", "tool_input": {"command": "` + escapeJSON(tt.command) + `"}}`
@@ -98,7 +107,10 @@ func TestPRMergeRule_Evaluate_NonMergeCommands(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockGh := &MockGhHelper{}
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockGh := command.NewMockGhRunner(ctrl)
 			rule := NewPRMergeRule(mockGh)
 
 			jsonInput := `{"tool_name": "Bash", "tool_input": {"command": "` + escapeJSON(tt.command) + `"}}`
@@ -166,8 +178,11 @@ func TestPRMergeRule_Evaluate_AllowMergeToFeatureBranch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockGh := &MockGhHelper{}
-			mockGh.On("GetPRBaseBranch", tt.prNumber).Return(tt.baseBranch, nil)
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockGh := command.NewMockGhRunner(ctrl)
+			mockGh.EXPECT().GetPRBaseBranch(context.Background(), "", tt.prNumber).Return(tt.baseBranch, nil)
 			rule := NewPRMergeRule(mockGh)
 
 			jsonInput := `{"tool_name": "Bash", "tool_input": {"command": "` + escapeJSON(tt.command) + `"}}`
@@ -178,7 +193,6 @@ func TestPRMergeRule_Evaluate_AllowMergeToFeatureBranch(t *testing.T) {
 			got, err := rule.Evaluate(toolInput)
 			require.NoError(t, err)
 			assert.True(t, got.Allowed)
-			mockGh.AssertExpectations(t)
 		})
 	}
 }
@@ -233,8 +247,11 @@ func TestPRMergeRule_Evaluate_BlockMergeToMain(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockGh := &MockGhHelper{}
-			mockGh.On("GetPRBaseBranch", tt.prNumber).Return("main", nil)
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockGh := command.NewMockGhRunner(ctrl)
+			mockGh.EXPECT().GetPRBaseBranch(context.Background(), "", tt.prNumber).Return("main", nil)
 			rule := NewPRMergeRule(mockGh)
 
 			jsonInput := `{"tool_name": "Bash", "tool_input": {"command": "` + escapeJSON(tt.command) + `"}}`
@@ -247,7 +264,6 @@ func TestPRMergeRule_Evaluate_BlockMergeToMain(t *testing.T) {
 			assert.False(t, got.Allowed)
 			assert.Equal(t, "gh-pr-merge", got.RuleName)
 			assert.Equal(t, "Merging PR to main/master branch is not allowed", got.Message)
-			mockGh.AssertExpectations(t)
 		})
 	}
 }
@@ -277,8 +293,11 @@ func TestPRMergeRule_Evaluate_BlockMergeToMaster(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockGh := &MockGhHelper{}
-			mockGh.On("GetPRBaseBranch", tt.prNumber).Return("master", nil)
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockGh := command.NewMockGhRunner(ctrl)
+			mockGh.EXPECT().GetPRBaseBranch(context.Background(), "", tt.prNumber).Return("master", nil)
 			rule := NewPRMergeRule(mockGh)
 
 			jsonInput := `{"tool_name": "Bash", "tool_input": {"command": "` + escapeJSON(tt.command) + `"}}`
@@ -291,7 +310,6 @@ func TestPRMergeRule_Evaluate_BlockMergeToMaster(t *testing.T) {
 			assert.False(t, got.Allowed)
 			assert.Equal(t, "gh-pr-merge", got.RuleName)
 			assert.Equal(t, "Merging PR to main/master branch is not allowed", got.Message)
-			mockGh.AssertExpectations(t)
 		})
 	}
 }
@@ -321,8 +339,11 @@ func TestPRMergeRule_Evaluate_PRNumberFromURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockGh := &MockGhHelper{}
-			mockGh.On("GetPRBaseBranch", tt.prNumber).Return("main", nil)
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockGh := command.NewMockGhRunner(ctrl)
+			mockGh.EXPECT().GetPRBaseBranch(context.Background(), "", tt.prNumber).Return("main", nil)
 			rule := NewPRMergeRule(mockGh)
 
 			jsonInput := `{"tool_name": "Bash", "tool_input": {"command": "` + escapeJSON(tt.command) + `"}}`
@@ -333,7 +354,6 @@ func TestPRMergeRule_Evaluate_PRNumberFromURL(t *testing.T) {
 			got, err := rule.Evaluate(toolInput)
 			require.NoError(t, err)
 			assert.False(t, got.Allowed)
-			mockGh.AssertExpectations(t)
 		})
 	}
 }
@@ -367,8 +387,11 @@ func TestPRMergeRule_Evaluate_FailOpenOnError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockGh := &MockGhHelper{}
-			mockGh.On("GetPRBaseBranch", tt.prNumber).Return("", tt.ghError)
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockGh := command.NewMockGhRunner(ctrl)
+			mockGh.EXPECT().GetPRBaseBranch(context.Background(), "", tt.prNumber).Return("", tt.ghError)
 			rule := NewPRMergeRule(mockGh)
 
 			jsonInput := `{"tool_name": "Bash", "tool_input": {"command": "` + escapeJSON(tt.command) + `"}}`
@@ -379,7 +402,6 @@ func TestPRMergeRule_Evaluate_FailOpenOnError(t *testing.T) {
 			got, err := rule.Evaluate(toolInput)
 			require.NoError(t, err)
 			assert.True(t, got.Allowed)
-			mockGh.AssertExpectations(t)
 		})
 	}
 }
@@ -409,7 +431,10 @@ func TestPRMergeRule_Evaluate_FailOpenOnInvalidPRNumber(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockGh := &MockGhHelper{}
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockGh := command.NewMockGhRunner(ctrl)
 			rule := NewPRMergeRule(mockGh)
 
 			jsonInput := `{"tool_name": "Bash", "tool_input": {"command": "` + escapeJSON(tt.command) + `"}}`
@@ -420,13 +445,16 @@ func TestPRMergeRule_Evaluate_FailOpenOnInvalidPRNumber(t *testing.T) {
 			got, err := rule.Evaluate(toolInput)
 			require.NoError(t, err)
 			assert.True(t, got.Allowed)
-			mockGh.AssertNotCalled(t, "GetPRBaseBranch")
+			// No expectations set, so gomock will verify no calls were made
 		})
 	}
 }
 
 func TestPRMergeRule_Evaluate_NoCommandArg(t *testing.T) {
-	mockGh := &MockGhHelper{}
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockGh := command.NewMockGhRunner(ctrl)
 	rule := NewPRMergeRule(mockGh)
 
 	jsonInput := `{"tool_name": "Bash", "tool_input": {}}`
@@ -437,7 +465,7 @@ func TestPRMergeRule_Evaluate_NoCommandArg(t *testing.T) {
 	got, err := rule.Evaluate(toolInput)
 	require.NoError(t, err)
 	assert.True(t, got.Allowed)
-	mockGh.AssertNotCalled(t, "GetPRBaseBranch")
+	// No expectations set, so gomock will verify no calls were made
 }
 
 func TestPRMergeRule_Evaluate_ApiMergeVariants(t *testing.T) {
@@ -487,8 +515,11 @@ func TestPRMergeRule_Evaluate_ApiMergeVariants(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockGh := &MockGhHelper{}
-			mockGh.On("GetPRBaseBranch", tt.prNumber).Return(tt.baseBranch, nil)
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			mockGh := command.NewMockGhRunner(ctrl)
+			mockGh.EXPECT().GetPRBaseBranch(context.Background(), "", tt.prNumber).Return(tt.baseBranch, nil)
 			rule := NewPRMergeRule(mockGh)
 
 			jsonInput := `{"tool_name": "Bash", "tool_input": {"command": "` + escapeJSON(tt.command) + `"}}`
@@ -506,7 +537,6 @@ func TestPRMergeRule_Evaluate_ApiMergeVariants(t *testing.T) {
 			} else {
 				assert.True(t, got.Allowed)
 			}
-			mockGh.AssertExpectations(t)
 		})
 	}
 }

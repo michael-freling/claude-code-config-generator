@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/michael-freling/claude-code-tools/internal/command"
 	"github.com/michael-freling/claude-code-tools/internal/hooks"
 	"github.com/spf13/cobra"
 )
@@ -38,15 +39,16 @@ func newPreToolUseCmd() *cobra.Command {
 				return fmt.Errorf("failed to parse tool input: %w", err)
 			}
 
-			gitHelper := hooks.NewGitHelper()
-			ghHelper := hooks.NewGhHelper()
+			runner := command.NewRunner()
+			gitRunner := command.NewGitRunner(runner)
+			ghRunner := command.NewGhRunner(runner)
 
 			rules := []hooks.Rule{
 				hooks.NewNoVerifyRule(),
-				hooks.NewGitPushRule(gitHelper),
+				hooks.NewGitPushRule(gitRunner),
 				hooks.NewBranchProtectionRule(),
 				hooks.NewRulesetRule(),
-				hooks.NewPRMergeRule(ghHelper),
+				hooks.NewPRMergeRule(ghRunner),
 			}
 
 			engine := hooks.NewRuleEngine(rules...)
