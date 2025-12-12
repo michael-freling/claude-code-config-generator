@@ -1,4 +1,4 @@
-package workflow
+package command
 
 import (
 	"bytes"
@@ -7,29 +7,29 @@ import (
 	"strings"
 )
 
-// CommandRunner abstracts command execution for testability
-type CommandRunner interface {
+// Runner abstracts command execution for testability
+type Runner interface {
 	// Run executes a command and returns stdout, stderr, and error
 	Run(ctx context.Context, name string, args ...string) (stdout string, stderr string, err error)
 	// RunInDir executes a command in a specific directory
 	RunInDir(ctx context.Context, dir string, name string, args ...string) (stdout string, stderr string, err error)
 }
 
-// commandRunner implements CommandRunner interface
-type commandRunner struct{}
+// realRunner implements Runner interface
+type realRunner struct{}
 
-// NewCommandRunner creates a new command runner
-func NewCommandRunner() CommandRunner {
-	return &commandRunner{}
+// NewRunner creates a new command runner
+func NewRunner() Runner {
+	return &realRunner{}
 }
 
 // Run executes a command and returns stdout, stderr, and error
-func (r *commandRunner) Run(ctx context.Context, name string, args ...string) (string, string, error) {
+func (r *realRunner) Run(ctx context.Context, name string, args ...string) (string, string, error) {
 	return r.RunInDir(ctx, "", name, args...)
 }
 
 // RunInDir executes a command in a specific directory
-func (r *commandRunner) RunInDir(ctx context.Context, dir string, name string, args ...string) (string, string, error) {
+func (r *realRunner) RunInDir(ctx context.Context, dir string, name string, args ...string) (string, string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	if dir != "" {
 		cmd.Dir = dir

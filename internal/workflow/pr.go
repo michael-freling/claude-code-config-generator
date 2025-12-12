@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/michael-freling/claude-code-tools/internal/command"
 )
 
 var prNumberRegex = regexp.MustCompile(`/pull/(\d+)`)
@@ -25,22 +27,22 @@ type PRManager interface {
 // prManager implements PRManager interface
 type prManager struct {
 	workingDir string
-	gitRunner  GitRunner
-	ghRunner   GhRunner
+	gitRunner  command.GitRunner
+	ghRunner   command.GhRunner
 }
 
 // NewPRManager creates a new PR manager
 func NewPRManager(workingDir string) PRManager {
-	cmdRunner := NewCommandRunner()
+	cmdRunner := command.NewRunner()
 	return &prManager{
 		workingDir: workingDir,
-		gitRunner:  NewGitRunner(cmdRunner),
-		ghRunner:   NewGhRunner(cmdRunner),
+		gitRunner:  command.NewGitRunner(cmdRunner),
+		ghRunner:   command.NewGhRunner(cmdRunner),
 	}
 }
 
 // NewPRManagerWithRunners creates a new PR manager with injected runners for testing
-func NewPRManagerWithRunners(workingDir string, gitRunner GitRunner, ghRunner GhRunner) PRManager {
+func NewPRManagerWithRunners(workingDir string, gitRunner command.GitRunner, ghRunner command.GhRunner) PRManager {
 	return &prManager{
 		workingDir: workingDir,
 		gitRunner:  gitRunner,

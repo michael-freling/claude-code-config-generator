@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/michael-freling/claude-code-tools/internal/command"
 )
 
 // Config holds configuration for the orchestrator
@@ -64,7 +66,7 @@ type Orchestrator struct {
 	confirmFunc     func(plan *Plan) (bool, string, error)
 	worktreeManager WorktreeManager
 	logger          Logger
-	ghRunner        GhRunner
+	ghRunner        command.GhRunner
 
 	// For testing - if nil, creates real checker
 	ciCheckerFactory func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker
@@ -95,8 +97,8 @@ func NewOrchestratorWithConfig(config *Config) (*Orchestrator, error) {
 	stateManager := NewStateManager(config.BaseDir)
 	parser := NewOutputParser()
 	worktreeManager := NewWorktreeManager(config.BaseDir)
-	cmdRunner := NewCommandRunner()
-	ghRunner := NewGhRunner(cmdRunner)
+	cmdRunner := command.NewRunner()
+	ghRunner := command.NewGhRunner(cmdRunner)
 
 	return &Orchestrator{
 		stateManager:    stateManager,

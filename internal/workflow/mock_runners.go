@@ -3,13 +3,17 @@ package workflow
 import (
 	"context"
 
+	"github.com/michael-freling/claude-code-tools/internal/command"
 	"github.com/stretchr/testify/mock"
 )
 
-// MockCommandRunner is a mock implementation of CommandRunner
+// MockCommandRunner is a mock implementation of command.Runner
 type MockCommandRunner struct {
 	mock.Mock
 }
+
+// Ensure MockCommandRunner implements command.Runner
+var _ command.Runner = (*MockCommandRunner)(nil)
 
 func (m *MockCommandRunner) Run(ctx context.Context, name string, args ...string) (string, string, error) {
 	callArgs := []interface{}{ctx, name}
@@ -29,10 +33,13 @@ func (m *MockCommandRunner) RunInDir(ctx context.Context, dir string, name strin
 	return mockArgs.String(0), mockArgs.String(1), mockArgs.Error(2)
 }
 
-// MockGitRunner is a mock implementation of GitRunner
+// MockGitRunner is a mock implementation of command.GitRunner
 type MockGitRunner struct {
 	mock.Mock
 }
+
+// Ensure MockGitRunner implements command.GitRunner
+var _ command.GitRunner = (*MockGitRunner)(nil)
 
 func (m *MockGitRunner) GetCurrentBranch(ctx context.Context, dir string) (string, error) {
 	args := m.Called(ctx, dir)
@@ -54,10 +61,13 @@ func (m *MockGitRunner) WorktreeRemove(ctx context.Context, dir string, path str
 	return args.Error(0)
 }
 
-// MockGhRunner is a mock implementation of GhRunner
+// MockGhRunner is a mock implementation of command.GhRunner
 type MockGhRunner struct {
 	mock.Mock
 }
+
+// Ensure MockGhRunner implements command.GhRunner
+var _ command.GhRunner = (*MockGhRunner)(nil)
 
 func (m *MockGhRunner) PRCreate(ctx context.Context, dir string, title, body, head string) (string, error) {
 	args := m.Called(ctx, dir, title, body, head)
@@ -71,6 +81,11 @@ func (m *MockGhRunner) PRView(ctx context.Context, dir string, jsonFields string
 
 func (m *MockGhRunner) PRChecks(ctx context.Context, dir string, prNumber int, jsonFields string) (string, error) {
 	args := m.Called(ctx, dir, prNumber, jsonFields)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockGhRunner) GetPRBaseBranch(ctx context.Context, dir string, prNumber string) (string, error) {
+	args := m.Called(ctx, dir, prNumber)
 	return args.String(0), args.Error(1)
 }
 

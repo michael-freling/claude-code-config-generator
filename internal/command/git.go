@@ -1,4 +1,4 @@
-package workflow
+package command
 
 import (
 	"context"
@@ -19,11 +19,11 @@ type GitRunner interface {
 }
 
 type gitRunner struct {
-	runner CommandRunner
+	runner Runner
 }
 
 // NewGitRunner creates a new GitRunner instance
-func NewGitRunner(runner CommandRunner) GitRunner {
+func NewGitRunner(runner Runner) GitRunner {
 	return &gitRunner{
 		runner: runner,
 	}
