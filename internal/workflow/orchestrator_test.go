@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/michael-freling/claude-code-tools/internal/command"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -140,7 +141,7 @@ func (m *MockPromptGenerator) GenerateRefactoringPrompt(plan *Plan) (string, err
 	return args.String(0), args.Error(1)
 }
 
-func (m *MockPromptGenerator) GeneratePRSplitPrompt(metrics *PRMetrics, commits []Commit) (string, error) {
+func (m *MockPromptGenerator) GeneratePRSplitPrompt(metrics *PRMetrics, commits []command.Commit) (string, error) {
 	args := m.Called(metrics, commits)
 	return args.String(0), args.Error(1)
 }
@@ -1376,7 +1377,7 @@ func TestOrchestrator_executePhase(t *testing.T) {
 			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser, ci *MockCIChecker, wm *MockWorktreeManager, git *MockGitRunner) {
 				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
 				git.On("GetCurrentBranch", mock.Anything, mock.Anything).Return("feature-branch", nil)
-				git.On("GetCommits", mock.Anything, mock.Anything, "main").Return([]Commit{
+				git.On("GetCommits", mock.Anything, mock.Anything, "main").Return([]command.Commit{
 					{Hash: "abc123", Subject: "feat: add feature"},
 				}, nil)
 				pg.On("GeneratePRSplitPrompt", mock.Anything, mock.Anything).Return("pr split prompt", nil)
@@ -2801,7 +2802,7 @@ func TestOrchestrator_executePRSplit(t *testing.T) {
 			setupMocks: func(sm *MockStateManager, exec *MockClaudeExecutor, pg *MockPromptGenerator, op *MockOutputParser, git *MockGitRunner) {
 				sm.On("SaveState", "test-workflow", mock.Anything).Return(nil)
 				git.On("GetCurrentBranch", mock.Anything, mock.Anything).Return("feature-branch", nil)
-				git.On("GetCommits", mock.Anything, mock.Anything, "main").Return([]Commit{
+				git.On("GetCommits", mock.Anything, mock.Anything, "main").Return([]command.Commit{
 					{Hash: "abc123", Subject: "feat: add feature"},
 				}, nil)
 				pg.On("GeneratePRSplitPrompt", mock.Anything, mock.Anything).Return("pr-split prompt", nil)
@@ -2907,7 +2908,7 @@ func TestOrchestrator_executePRSplit_CIFailureRetry(t *testing.T) {
 	// second attempt uses GenerateFixCIPrompt, CI passes
 	mockSM.On("SaveState", "test-workflow", mock.Anything).Return(nil)
 	mockGit.On("GetCurrentBranch", mock.Anything, mock.Anything).Return("feature-branch", nil)
-	mockGit.On("GetCommits", mock.Anything, mock.Anything, "main").Return([]Commit{
+	mockGit.On("GetCommits", mock.Anything, mock.Anything, "main").Return([]command.Commit{
 		{Hash: "abc123", Subject: "feat: add feature"},
 	}, nil)
 

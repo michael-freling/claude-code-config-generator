@@ -1,4 +1,4 @@
-package workflow
+package command
 
 import (
 	"context"
@@ -19,6 +19,8 @@ type GhRunner interface {
 	PRView(ctx context.Context, dir string, jsonFields string, jqQuery string) (output string, err error)
 	// PRChecks returns CI check status as JSON
 	PRChecks(ctx context.Context, dir string, prNumber int, jsonFields string) (output string, err error)
+	// GetPRBaseBranch returns the base branch name for a pull request
+	GetPRBaseBranch(ctx context.Context, dir string, prNumber string) (string, error)
 	// RunRerun reruns failed/cancelled jobs for a workflow run
 	RunRerun(ctx context.Context, dir string, runID int64) error
 	// GetLatestRunID gets the latest workflow run ID for a PR
@@ -27,11 +29,11 @@ type GhRunner interface {
 
 // ghRunner implements GhRunner interface
 type ghRunner struct {
-	runner CommandRunner
+	runner Runner
 }
 
 // NewGhRunner creates a new gh runner
-func NewGhRunner(runner CommandRunner) GhRunner {
+func NewGhRunner(runner Runner) GhRunner {
 	return &ghRunner{
 		runner: runner,
 	}
@@ -118,6 +120,18 @@ func (g *ghRunner) PRChecks(ctx context.Context, dir string, prNumber int, jsonF
 	}
 
 	return stdout, nil
+}
+
+// GetPRBaseBranch returns the base branch name for the specified PR number
+func (g *ghRunner) GetPRBaseBranch(ctx context.Context, dir string, prNumber string) (string, error) {
+	args := []string{"pr", "view", prNumber, "--json", "baseRefName", "--jq", ".baseRefName"}
+
+	stdout, stderr, err := g.runner.RunInDir(ctx, dir, "gh", args...)
+	if err != nil {
+		return "", fmt.Errorf("failed to get PR base branch: %w (stderr: %s)", err, stderr)
+	}
+
+	return strings.TrimSpace(stdout), nil
 }
 
 // RunRerun reruns failed/cancelled jobs for a workflow run

@@ -1,10 +1,16 @@
-package workflow
+package command
 
 import (
 	"context"
 	"fmt"
 	"strings"
 )
+
+// Commit represents a git commit with its hash and subject
+type Commit struct {
+	Hash    string `json:"hash"`
+	Subject string `json:"subject"`
+}
 
 // GitRunner abstracts git command execution
 type GitRunner interface {
@@ -39,11 +45,11 @@ type GitRunner interface {
 }
 
 type gitRunner struct {
-	runner CommandRunner
+	runner Runner
 }
 
 // NewGitRunner creates a new GitRunner instance
-func NewGitRunner(runner CommandRunner) GitRunner {
+func NewGitRunner(runner Runner) GitRunner {
 	return &gitRunner{
 		runner: runner,
 	}

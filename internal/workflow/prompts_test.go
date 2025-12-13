@@ -5,6 +5,7 @@ import (
 	"testing"
 	"text/template"
 
+	"github.com/michael-freling/claude-code-tools/internal/command"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -299,7 +300,7 @@ func TestPromptGenerator_GeneratePRSplitPrompt(t *testing.T) {
 	tests := []struct {
 		name        string
 		metrics     *PRMetrics
-		commits     []Commit
+		commits     []command.Commit
 		wantErr     bool
 		errContains string
 		wantContain []string
@@ -313,7 +314,7 @@ func TestPromptGenerator_GeneratePRSplitPrompt(t *testing.T) {
 				FilesModified: []string{"main.go", "routes.go"},
 				FilesDeleted:  []string{"old_auth.go"},
 			},
-			commits: []Commit{
+			commits: []command.Commit{
 				{Hash: "abc123", Subject: "Add authentication"},
 				{Hash: "def456", Subject: "Add middleware"},
 			},
@@ -336,7 +337,7 @@ func TestPromptGenerator_GeneratePRSplitPrompt(t *testing.T) {
 		{
 			name:        "returns error when metrics is nil",
 			metrics:     nil,
-			commits:     []Commit{},
+			commits:     []command.Commit{},
 			wantErr:     true,
 			errContains: "metrics cannot be nil",
 		},
@@ -346,7 +347,7 @@ func TestPromptGenerator_GeneratePRSplitPrompt(t *testing.T) {
 				LinesChanged: 50,
 				FilesChanged: 3,
 			},
-			commits: []Commit{},
+			commits: []command.Commit{},
 			wantErr: false,
 			wantContain: []string{
 				"Lines Changed: 50",
@@ -360,7 +361,7 @@ func TestPromptGenerator_GeneratePRSplitPrompt(t *testing.T) {
 				FilesChanged: 5,
 				FilesAdded:   []string{"file1.go", "file2.go"},
 			},
-			commits: []Commit{
+			commits: []command.Commit{
 				{Hash: "ghi789", Subject: "Add new files"},
 			},
 			wantErr: false,
@@ -492,7 +493,7 @@ func TestPromptGenerator_AllMethodsReturnValidPrompts(t *testing.T) {
 		{
 			name: "PR split prompt",
 			genFunc: func() (string, error) {
-				return pg.GeneratePRSplitPrompt(testMetrics, []Commit{})
+				return pg.GeneratePRSplitPrompt(testMetrics, []command.Commit{})
 			},
 		},
 	}
@@ -631,7 +632,7 @@ func TestPromptGenerator_TemplateNotLoadedError(t *testing.T) {
 		{
 			name: "pr-split template not loaded returns error",
 			genFunc: func(pg *promptGenerator) (string, error) {
-				return pg.GeneratePRSplitPrompt(&PRMetrics{LinesChanged: 100, FilesChanged: 5}, []Commit{})
+				return pg.GeneratePRSplitPrompt(&PRMetrics{LinesChanged: 100, FilesChanged: 5}, []command.Commit{})
 			},
 			errContains: "pr-split template not loaded",
 		},
@@ -692,7 +693,7 @@ func TestPromptGenerator_TemplateExecutionError(t *testing.T) {
 			templateName: "pr-split.tmpl",
 			templateText: "{{.WrongField}}",
 			genFunc: func(pg *promptGenerator) (string, error) {
-				return pg.GeneratePRSplitPrompt(&PRMetrics{LinesChanged: 100, FilesChanged: 5}, []Commit{})
+				return pg.GeneratePRSplitPrompt(&PRMetrics{LinesChanged: 100, FilesChanged: 5}, []command.Commit{})
 			},
 			errContains: "failed to execute pr-split template",
 		},

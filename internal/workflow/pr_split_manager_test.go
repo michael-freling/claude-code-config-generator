@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/michael-freling/claude-code-tools/internal/command"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -13,8 +14,8 @@ import (
 func TestNewPRSplitManager(t *testing.T) {
 	tests := []struct {
 		name string
-		git  GitRunner
-		gh   GhRunner
+		git  command.GitRunner
+		gh   command.GhRunner
 	}{
 		{
 			name: "creates PR split manager with git and gh runners",

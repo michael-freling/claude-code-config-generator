@@ -8,6 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+
+	"github.com/michael-freling/claude-code-tools/internal/command"
 )
 
 // Integration Test Documentation:
@@ -139,8 +141,8 @@ func TestNewPRManagerWithRunners(t *testing.T) {
 	tests := []struct {
 		name       string
 		workingDir string
-		gitRunner  GitRunner
-		ghRunner   GhRunner
+		gitRunner  command.GitRunner
+		ghRunner   command.GhRunner
 	}{
 		{
 			name:       "creates manager with mock runners",

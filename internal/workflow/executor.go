@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os/exec"
 	"time"
+
+	"github.com/michael-freling/claude-code-tools/internal/command"
 )
 
 // ClaudeExecutor interface allows mocking of Claude CLI invocation
@@ -70,7 +72,7 @@ type ExecuteResult struct {
 // claudeExecutor implements ClaudeExecutor interface
 type claudeExecutor struct {
 	claudePath string
-	cmdRunner  CommandRunner
+	cmdRunner  command.Runner
 	logger     Logger
 }
 
@@ -78,7 +80,7 @@ type claudeExecutor struct {
 func NewClaudeExecutor(logger Logger) ClaudeExecutor {
 	return &claudeExecutor{
 		claudePath: "claude",
-		cmdRunner:  NewCommandRunner(),
+		cmdRunner:  command.NewRunner(),
 		logger:     logger,
 	}
 }
@@ -87,13 +89,13 @@ func NewClaudeExecutor(logger Logger) ClaudeExecutor {
 func NewClaudeExecutorWithPath(claudePath string, logger Logger) ClaudeExecutor {
 	return &claudeExecutor{
 		claudePath: claudePath,
-		cmdRunner:  NewCommandRunner(),
+		cmdRunner:  command.NewRunner(),
 		logger:     logger,
 	}
 }
 
 // NewClaudeExecutorWithRunner creates executor with custom command runner (for testing)
-func NewClaudeExecutorWithRunner(claudePath string, cmdRunner CommandRunner, logger Logger) ClaudeExecutor {
+func NewClaudeExecutorWithRunner(claudePath string, cmdRunner command.Runner, logger Logger) ClaudeExecutor {
 	return &claudeExecutor{
 		claudePath: claudePath,
 		cmdRunner:  cmdRunner,

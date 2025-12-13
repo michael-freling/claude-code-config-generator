@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"text/template"
 
+	"github.com/michael-freling/claude-code-tools/internal/command"
 	"github.com/michael-freling/claude-code-tools/internal/templates"
 )
 
@@ -13,7 +14,7 @@ type PromptGenerator interface {
 	GeneratePlanningPrompt(wfType WorkflowType, description string, feedback []string) (string, error)
 	GenerateImplementationPrompt(plan *Plan) (string, error)
 	GenerateRefactoringPrompt(plan *Plan) (string, error)
-	GeneratePRSplitPrompt(metrics *PRMetrics, commits []Commit) (string, error)
+	GeneratePRSplitPrompt(metrics *PRMetrics, commits []command.Commit) (string, error)
 	GenerateFixCIPrompt(failures string) (string, error)
 }
 
@@ -126,7 +127,7 @@ func (p *promptGenerator) GenerateRefactoringPrompt(plan *Plan) (string, error) 
 }
 
 // GeneratePRSplitPrompt generates a prompt for the PR split phase
-func (p *promptGenerator) GeneratePRSplitPrompt(metrics *PRMetrics, commits []Commit) (string, error) {
+func (p *promptGenerator) GeneratePRSplitPrompt(metrics *PRMetrics, commits []command.Commit) (string, error) {
 	if metrics == nil {
 		return "", fmt.Errorf("metrics cannot be nil")
 	}
@@ -138,7 +139,7 @@ func (p *promptGenerator) GeneratePRSplitPrompt(metrics *PRMetrics, commits []Co
 
 	data := struct {
 		Metrics *PRMetrics
-		Commits []Commit
+		Commits []command.Commit
 	}{
 		Metrics: metrics,
 		Commits: commits,

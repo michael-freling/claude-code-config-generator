@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/michael-freling/claude-code-tools/internal/command"
 )
 
 // PRSplitManager orchestrates the creation of split PRs with proper branch chains
@@ -18,12 +20,12 @@ type PRSplitManager interface {
 }
 
 type prSplitManager struct {
-	git GitRunner
-	gh  GhRunner
+	git command.GitRunner
+	gh  command.GhRunner
 }
 
 // NewPRSplitManager creates a new PRSplitManager instance
-func NewPRSplitManager(git GitRunner, gh GhRunner) PRSplitManager {
+func NewPRSplitManager(git command.GitRunner, gh command.GhRunner) PRSplitManager {
 	return &prSplitManager{
 		git: git,
 		gh:  gh,

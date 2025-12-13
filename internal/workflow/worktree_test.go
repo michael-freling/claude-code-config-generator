@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+
+	"github.com/michael-freling/claude-code-tools/internal/command"
 )
 
 func TestNewWorktreeManager(t *testing.T) {
@@ -234,7 +236,7 @@ func TestNewWorktreeManagerWithRunner(t *testing.T) {
 	tests := []struct {
 		name      string
 		baseDir   string
-		gitRunner GitRunner
+		gitRunner command.GitRunner
 	}{
 		{
 			name:      "creates manager with mock runner",
