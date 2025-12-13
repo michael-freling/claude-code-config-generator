@@ -5,7 +5,6 @@ import (
 	"time"
 )
 
-// Phase represents a workflow phase
 type Phase string
 
 const (
@@ -18,7 +17,6 @@ const (
 	PhaseFailed         Phase = "FAILED"
 )
 
-// PhaseStatus represents the status of a phase
 type PhaseStatus string
 
 const (
@@ -29,7 +27,6 @@ const (
 	StatusFailed     PhaseStatus = "failed"
 )
 
-// WorkflowType represents the type of workflow
 type WorkflowType string
 
 const (
@@ -54,13 +51,14 @@ type WorkflowState struct {
 
 // PhaseState represents the state of a single phase
 type PhaseState struct {
-	Status      PhaseStatus `json:"status"`
-	StartedAt   *time.Time  `json:"startedAt,omitempty"`
-	CompletedAt *time.Time  `json:"completedAt,omitempty"`
-	Attempts    int         `json:"attempts"`
-	Feedback    []string    `json:"feedback,omitempty"`
-	Required    *bool       `json:"required,omitempty"`
-	Metrics     *PRMetrics  `json:"metrics,omitempty"`
+	Status      PhaseStatus       `json:"status"`
+	StartedAt   *time.Time        `json:"startedAt,omitempty"`
+	CompletedAt *time.Time        `json:"completedAt,omitempty"`
+	Attempts    int               `json:"attempts"`
+	Feedback    []string          `json:"feedback,omitempty"`
+	Required    *bool             `json:"required,omitempty"`
+	Metrics     *PRMetrics        `json:"metrics,omitempty"`
+	CIHistory   *CIFailureHistory `json:"ciHistory,omitempty"`
 }
 
 // PRMetrics holds diff statistics for PR split decision
@@ -72,17 +70,13 @@ type PRMetrics struct {
 	FilesDeleted  []string `json:"filesDeleted,omitempty"`
 }
 
-// FailureType represents the type of failure that occurred
 type FailureType string
 
 const (
-	// FailureTypeExecution indicates the phase execution itself failed (e.g., code generation)
 	FailureTypeExecution FailureType = "execution"
-	// FailureTypeCI indicates CI check failed after successful execution
-	FailureTypeCI FailureType = "ci"
+	FailureTypeCI        FailureType = "ci"
 )
 
-// WorkflowError represents an error that occurred during workflow
 type WorkflowError struct {
 	Message     string                 `json:"message"`
 	Phase       Phase                  `json:"phase"`
@@ -96,7 +90,6 @@ func (e *WorkflowError) Error() string {
 	return e.Message
 }
 
-// Plan represents the structured plan output from Claude
 type Plan struct {
 	Summary             string       `json:"summary"`
 	ContextType         string       `json:"contextType"`
@@ -130,7 +123,6 @@ type WorkStream struct {
 	DependsOn []string `json:"dependsOn,omitempty"`
 }
 
-// ImplementationSummary represents output from implementation phase
 type ImplementationSummary struct {
 	FilesChanged []string `json:"filesChanged"`
 	LinesAdded   int      `json:"linesAdded"`
@@ -140,14 +132,12 @@ type ImplementationSummary struct {
 	NextSteps    []string `json:"nextSteps,omitempty"`
 }
 
-// RefactoringSummary represents output from refactoring phase
 type RefactoringSummary struct {
 	FilesChanged     []string `json:"filesChanged"`
 	ImprovementsMade []string `json:"improvementsMade"`
 	Summary          string   `json:"summary"`
 }
 
-// SplitStrategy represents the strategy for creating child branches
 type SplitStrategy string
 
 const (
@@ -157,7 +147,6 @@ const (
 	SplitByFiles SplitStrategy = "files"
 )
 
-// ChildPRPlan represents the plan for a single child PR
 type ChildPRPlan struct {
 	Title       string   `json:"title"`
 	Description string   `json:"description"`
@@ -165,7 +154,6 @@ type ChildPRPlan struct {
 	Files       []string `json:"files,omitempty"`
 }
 
-// PRSplitPlan represents the overall split plan output from Claude
 type PRSplitPlan struct {
 	Strategy    SplitStrategy `json:"strategy"`
 	ParentTitle string        `json:"parentTitle"`
@@ -174,7 +162,6 @@ type PRSplitPlan struct {
 	Summary     string        `json:"summary"`
 }
 
-// PRSplitResult represents output from PR split phase
 type PRSplitResult struct {
 	ParentPR    PRInfo   `json:"parentPR"`
 	ChildPRs    []PRInfo `json:"childPRs"`
@@ -182,7 +169,6 @@ type PRSplitResult struct {
 	BranchNames []string `json:"branchNames,omitempty"`
 }
 
-// PRInfo contains information about a pull request
 type PRInfo struct {
 	Number      int    `json:"number"`
 	URL         string `json:"url"`
@@ -190,7 +176,6 @@ type PRInfo struct {
 	Description string `json:"description"`
 }
 
-// WorkflowInfo represents summary information for listing
 type WorkflowInfo struct {
 	Name         string       `json:"name"`
 	Type         WorkflowType `json:"type"`
@@ -200,16 +185,120 @@ type WorkflowInfo struct {
 	Status       string       `json:"status"`
 }
 
-// CheckCIOptions configures CI checking behavior
 type CheckCIOptions struct {
 	SkipE2E        bool
 	E2ETestPattern string
 }
 
-// Commit represents a git commit
 type Commit struct {
 	Hash    string `json:"hash"`
 	Subject string `json:"subject"`
+}
+
+type CIFailureCategory string
+
+const (
+	// CategoryInfrastructure indicates the failure is due to infrastructure issues
+	CategoryInfrastructure CIFailureCategory = "infrastructure"
+
+	// CategoryCodeRelated indicates the failure is due to code issues
+	CategoryCodeRelated CIFailureCategory = "code_related"
+
+	// CategoryMixed indicates both infrastructure and code issues are present
+	CategoryMixed CIFailureCategory = "mixed"
+
+	// CategoryPersistent indicates the same failure keeps recurring
+	CategoryPersistent CIFailureCategory = "persistent"
+)
+
+// CIFailureReason provides detailed explanation for the classification
+type CIFailureReason struct {
+	Job         string            `json:"job"`
+	Category    CIFailureCategory `json:"category"`
+	Explanation string            `json:"explanation"`
+	Duration    time.Duration     `json:"duration,omitempty"`
+	Conclusion  string            `json:"conclusion"`
+}
+
+// CIJobDetail contains detailed information about a CI job
+type CIJobDetail struct {
+	Name        string        `json:"name"`
+	Conclusion  string        `json:"conclusion"` // SUCCESS, FAILURE, CANCELLED, etc.
+	Status      string        `json:"status"`     // completed, in_progress, queued
+	StartedAt   *time.Time    `json:"startedAt,omitempty"`
+	CompletedAt *time.Time    `json:"completedAt,omitempty"`
+	Duration    time.Duration `json:"duration,omitempty"`
+}
+
+// ClassifiedCIResult extends CIResult with classification information
+type ClassifiedCIResult struct {
+	*CIResult
+	Category          CIFailureCategory `json:"category"`
+	Reasons           []CIFailureReason `json:"reasons"`
+	RecommendedAction string            `json:"recommendedAction"`
+	JobDetails        []CIJobDetail     `json:"jobDetails,omitempty"`
+}
+
+// CIFailureHistoryEntry records a single CI failure occurrence
+type CIFailureHistoryEntry struct {
+	Timestamp     time.Time         `json:"timestamp"`
+	Category      CIFailureCategory `json:"category"`
+	FailedJobs    []string          `json:"failedJobs"`
+	CancelledJobs []string          `json:"cancelledJobs"`
+	Attempt       int               `json:"attempt"`
+}
+
+// CIFailureHistory tracks failure patterns across retry attempts
+type CIFailureHistory struct {
+	Entries []CIFailureHistoryEntry `json:"entries"`
+}
+
+// IsPersistentFailure checks if the same job failure pattern has occurred
+// consecutively for the specified threshold number of times, indicating
+// a fundamental issue that retries won't resolve.
+func (h *CIFailureHistory) IsPersistentFailure(threshold int) bool {
+	if len(h.Entries) < threshold {
+		return false
+	}
+
+	// Check the last 'threshold' entries for identical failure patterns
+	recentEntries := h.Entries[len(h.Entries)-threshold:]
+
+	// Compare job lists - if same jobs keep failing, it's persistent
+	firstJobs := make(map[string]bool)
+	for _, job := range recentEntries[0].FailedJobs {
+		firstJobs[job] = true
+	}
+	for _, job := range recentEntries[0].CancelledJobs {
+		firstJobs[job] = true
+	}
+
+	for i := 1; i < len(recentEntries); i++ {
+		currentJobs := make(map[string]bool)
+		for _, job := range recentEntries[i].FailedJobs {
+			currentJobs[job] = true
+		}
+		for _, job := range recentEntries[i].CancelledJobs {
+			currentJobs[job] = true
+		}
+
+		// Check if same jobs are failing
+		if len(currentJobs) != len(firstJobs) {
+			return false
+		}
+		for job := range currentJobs {
+			if !firstJobs[job] {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+// AddEntry adds a new failure entry to the history
+func (h *CIFailureHistory) AddEntry(entry CIFailureHistoryEntry) {
+	h.Entries = append(h.Entries, entry)
 }
 
 // Error variables for common error conditions

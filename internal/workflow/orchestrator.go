@@ -19,10 +19,6 @@ const (
 )
 
 // PRCreationResult represents the result of a PR creation attempt.
-// It contains the PR number (if created or found), the status of the operation,
-// and a message explaining the result. The status can be "created" (new PR),
-// "exists" (PR already exists), "skipped" (no commits to create PR for), or
-// "failed" (PR creation failed).
 type PRCreationResult struct {
 	PRNumber int    `json:"prNumber"`
 	Status   string `json:"status"` // "created", "exists", "skipped", "failed"
@@ -52,6 +48,7 @@ type Config struct {
 	GHCommandTimeout           time.Duration
 	MaxFixAttempts             int
 	LogLevel                   LogLevel
+	PersistentFailureThreshold int
 }
 
 // PhaseTimeouts holds timeout durations for each phase
@@ -96,6 +93,7 @@ type Orchestrator struct {
 	ghRunner        command.GhRunner
 	gitRunner       command.GitRunner
 	splitManager    PRSplitManager
+	ciClassifier    *CIFailureClassifier
 
 	// For testing - if nil, creates real checker
 	ciCheckerFactory func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker
@@ -143,6 +141,7 @@ func NewOrchestratorWithConfig(config *Config) (*Orchestrator, error) {
 		ghRunner:        ghRunner,
 		gitRunner:       gitRunner,
 		splitManager:    splitManager,
+		ciClassifier:    NewCIFailureClassifier(),
 	}, nil
 }
 
@@ -600,20 +599,21 @@ func (o *Orchestrator) executeImplementation(ctx context.Context, state *Workflo
 
 		ciSpinner.Fail("CI failed")
 
-		// Check if only cancelled jobs - if so, auto-rerun once
-		if len(ciResult.CancelledJobs) > 0 && len(ciResult.FailedJobs) == 0 {
-			ciResult, err = o.handleCancelledCI(ctx, 0, workingDir, ciResult)
+		// Handle CI failures with classification
+		if !ciResult.Passed {
+			var shouldContinueFixLoop bool
+			ciResult, shouldContinueFixLoop, err = o.handleCancelledCI(ctx, 0, workingDir, ciResult, phaseState)
 			if err != nil {
-				fmt.Printf("%s Failed to rerun cancelled jobs: %v\n", Yellow("⚠"), err)
-				// Continue to fix loop with original result
-			} else if ciResult.Passed {
-				// CI passed after rerun, continue to next phase
+				o.logger.Info("Error handling CI: %v", err)
+			}
+			if ciResult.Passed || !shouldContinueFixLoop {
 				return o.transitionPhase(state, PhaseRefactoring)
 			}
-			// If still has failures after rerun, continue to fix loop
 		}
 
-		lastError = formatCIErrors(ciResult)
+		// Classify the result for formatting
+		classified := o.ciClassifier.ClassifyResult(ciResult, phaseState.CIHistory)
+		lastError = formatCIErrors(ciResult, classified)
 		displayCIFailure(ciResult)
 
 		if err := o.stateManager.SaveState(state.Name, state); err != nil {
@@ -752,20 +752,21 @@ func (o *Orchestrator) executeRefactoring(ctx context.Context, state *WorkflowSt
 
 		ciSpinner.Fail("CI failed")
 
-		// Check if only cancelled jobs - if so, auto-rerun once
-		if len(ciResult.CancelledJobs) > 0 && len(ciResult.FailedJobs) == 0 {
-			ciResult, err = o.handleCancelledCI(ctx, 0, workingDir, ciResult)
+		// Handle CI failures with classification
+		if !ciResult.Passed {
+			var shouldContinueFixLoop bool
+			ciResult, shouldContinueFixLoop, err = o.handleCancelledCI(ctx, 0, workingDir, ciResult, phaseState)
 			if err != nil {
-				fmt.Printf("%s Failed to rerun cancelled jobs: %v\n", Yellow("⚠"), err)
-				// Continue to fix loop with original result
-			} else if ciResult.Passed {
-				// CI passed after rerun, break from loop
+				o.logger.Info("Error handling CI: %v", err)
+			}
+			if ciResult.Passed || !shouldContinueFixLoop {
 				break
 			}
-			// If still has failures after rerun, continue to fix loop
 		}
 
-		lastError = formatCIErrors(ciResult)
+		// Classify the result for formatting
+		classified := o.ciClassifier.ClassifyResult(ciResult, phaseState.CIHistory)
+		lastError = formatCIErrors(ciResult, classified)
 		displayCIFailure(ciResult)
 
 		if err := o.stateManager.SaveState(state.Name, state); err != nil {
@@ -934,22 +935,30 @@ func (o *Orchestrator) executePRSplit(ctx context.Context, state *WorkflowState)
 			if !ciResult.Passed {
 				ciSpinner.Fail("CI failed")
 
-				if len(ciResult.CancelledJobs) > 0 && len(ciResult.FailedJobs) == 0 {
-					ciResult, err = o.handleCancelledCI(ctx, childPR.Number, workingDir, ciResult)
-					if err != nil {
-						fmt.Printf("%s Failed to rerun cancelled jobs for child PR #%d: %v\n", Yellow("⚠"), childPR.Number, err)
-					} else if ciResult.Passed {
-						ciSpinner.Success("CI passed")
-						fmt.Printf("  %s Child PR #%d passed all checks after rerun\n", Green("✓"), childPR.Number)
-						continue
-					}
+				// Handle CI failures with classification
+				var shouldContinueFixLoop bool
+				ciResult, shouldContinueFixLoop, err = o.handleCancelledCI(ctx, childPR.Number, workingDir, ciResult, phaseState)
+				if err != nil {
+					o.logger.Info("Error handling CI for child PR #%d: %v", childPR.Number, err)
+				}
+				if ciResult.Passed {
+					ciSpinner.Success("CI passed")
+					fmt.Printf("  %s Child PR #%d passed all checks after auto-retry\n", Green("✓"), childPR.Number)
+					continue
+				}
+				if !shouldContinueFixLoop {
+					ciSpinner.Success("CI passed")
+					fmt.Printf("  %s Child PR #%d passed all checks\n", Green("✓"), childPR.Number)
+					continue
 				}
 
 				allPassed = false
 				if isLastChild {
 					fmt.Printf("%s\n", Yellow("Last child PR must pass e2e tests"))
 				}
-				lastError = formatCIErrors(ciResult)
+				// Classify the result for formatting
+				classified := o.ciClassifier.ClassifyResult(ciResult, phaseState.CIHistory)
+				lastError = formatCIErrors(ciResult, classified)
 				displayCIFailure(ciResult)
 				break
 			}
@@ -974,7 +983,6 @@ func (o *Orchestrator) executePRSplit(ctx context.Context, state *WorkflowState)
 	return o.transitionPhase(state, PhaseCompleted)
 }
 
-// getWorkingDir returns the working directory for the workflow, defaulting to BaseDir if not set
 func (o *Orchestrator) getWorkingDir(state *WorkflowState) string {
 	if state.WorktreePath != "" {
 		return state.WorktreePath
@@ -982,11 +990,7 @@ func (o *Orchestrator) getWorkingDir(state *WorkflowState) string {
 	return o.config.BaseDir
 }
 
-// executePRCreation executes the PR creation sub-routine using Claude.
-// It attempts to create a PR for the current branch, or finds an existing PR.
-// Returns the PR number if created or found, or 0 if PR creation was skipped
-// (e.g., no commits on branch). Returns an error if PR creation fails after
-// all retry attempts.
+// executePRCreation creates or finds a PR using Claude, retrying up to maxPRCreationAttempts times.
 func (o *Orchestrator) executePRCreation(ctx context.Context, state *WorkflowState) (int, error) {
 	o.logger.Verbose("Starting PR creation sub-routine")
 
@@ -1081,9 +1085,7 @@ func (o *Orchestrator) executePRCreation(ctx context.Context, state *WorkflowSta
 	return 0, fmt.Errorf("failed to create PR after %d attempts", maxPRCreationAttempts)
 }
 
-// handleNoPRError handles the case when no PR exists during CI check.
-// It attempts to create a PR and retry the CI check. Returns the CI result
-// if successful, or an error if PR creation or CI check fails.
+// handleNoPRError creates a PR when none exists and retries the CI check.
 func (o *Orchestrator) handleNoPRError(
 	ctx context.Context,
 	state *WorkflowState,
@@ -1130,7 +1132,6 @@ func (o *Orchestrator) handleNoPRError(
 	return ciResult, nil
 }
 
-// transitionPhase transitions the workflow to the next phase
 func (o *Orchestrator) transitionPhase(state *WorkflowState, nextPhase Phase) error {
 	currentPhaseState := state.Phases[state.CurrentPhase]
 	now := time.Now()
@@ -1167,17 +1168,14 @@ func (o *Orchestrator) transitionPhase(state *WorkflowState, nextPhase Phase) er
 	return nil
 }
 
-// failWorkflow transitions the workflow to failed state with execution failure type
 func (o *Orchestrator) failWorkflow(state *WorkflowState, err error) error {
 	return o.failWorkflowWithType(state, err, FailureTypeExecution)
 }
 
-// failWorkflowCI transitions the workflow to failed state with CI failure type
 func (o *Orchestrator) failWorkflowCI(state *WorkflowState, err error) error {
 	return o.failWorkflowWithType(state, err, FailureTypeCI)
 }
 
-// failWorkflowWithType transitions the workflow to failed state with a specific failure type
 func (o *Orchestrator) failWorkflowWithType(state *WorkflowState, err error, failureType FailureType) error {
 	state.Error = &WorkflowError{
 		Message:     err.Error(),
@@ -1199,7 +1197,6 @@ func (o *Orchestrator) failWorkflowWithType(state *WorkflowState, err error, fai
 	return err
 }
 
-// getPRMetrics collects PR metrics from git diff
 func (o *Orchestrator) getPRMetrics(ctx context.Context, workingDir string) (*PRMetrics, error) {
 	output, err := o.gitRunner.GetDiffStat(ctx, workingDir, "origin/main")
 	if err != nil {
@@ -1209,7 +1206,6 @@ func (o *Orchestrator) getPRMetrics(ctx context.Context, workingDir string) (*PR
 	return parseDiffStat(output)
 }
 
-// parseDiffStat parses git diff --stat output
 func parseDiffStat(output string) (*PRMetrics, error) {
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 	if len(lines) == 0 {
@@ -1324,11 +1320,27 @@ func defaultConfirmFunc(plan *Plan) (bool, string, error) {
 	}
 }
 
-// formatCIErrors formats CI errors for the fix prompt
-func formatCIErrors(result *CIResult) string {
+func formatCIErrors(result *CIResult, classified *ClassifiedCIResult) string {
 	var builder strings.Builder
 	builder.WriteString("CI checks failed with the following errors:\n\n")
 	builder.WriteString(result.Output)
+
+	if classified != nil {
+		builder.WriteString(fmt.Sprintf("\n\n## Classification: %s\n", classified.Category))
+		builder.WriteString(fmt.Sprintf("Recommended Action: %s\n", classified.RecommendedAction))
+
+		if len(classified.Reasons) > 0 {
+			builder.WriteString("\n### Job Analysis:\n")
+			for _, reason := range classified.Reasons {
+				durationStr := ""
+				if reason.Duration > 0 {
+					durationStr = fmt.Sprintf(" (duration: %s)", reason.Duration)
+				}
+				builder.WriteString(fmt.Sprintf("- **%s** [%s]%s: %s\n",
+					reason.Job, reason.Category, durationStr, reason.Explanation))
+			}
+		}
+	}
 
 	if len(result.FailedJobs) > 0 {
 		builder.WriteString("\n\nFailed jobs:\n")
@@ -1341,9 +1353,9 @@ func formatCIErrors(result *CIResult) string {
 
 	if len(result.CancelledJobs) > 0 {
 		if len(result.FailedJobs) > 0 {
-			builder.WriteString("\nCancelled jobs (infrastructure issue, not code failure):\n")
+			builder.WriteString("\nCancelled jobs:\n")
 		} else {
-			builder.WriteString("\n\nCancelled jobs (infrastructure issue, not code failure):\n")
+			builder.WriteString("\n\nCancelled jobs:\n")
 		}
 		for _, job := range result.CancelledJobs {
 			builder.WriteString("- ")
@@ -1355,7 +1367,6 @@ func formatCIErrors(result *CIResult) string {
 	return builder.String()
 }
 
-// displayCIFailure displays CI failures to the console
 func displayCIFailure(ciResult *CIResult) {
 	if len(ciResult.FailedJobs) > 0 {
 		fmt.Printf("\n%s\n", Red("CI failures detected:"))
@@ -1372,53 +1383,91 @@ func displayCIFailure(ciResult *CIResult) {
 	fmt.Printf("\n%s\n", ciResult.Output)
 }
 
-// handleCancelledCI checks if only cancelled jobs exist and attempts to rerun them
-// Returns the new CI result after rerun, or the original result if no rerun needed
-func (o *Orchestrator) handleCancelledCI(ctx context.Context, prNumber int, workingDir string, ciResult *CIResult) (*CIResult, error) {
-	// Check if only cancelled jobs (no actual failures)
-	if len(ciResult.CancelledJobs) == 0 || len(ciResult.FailedJobs) > 0 {
-		return ciResult, nil // Not just cancelled, return as-is
+// handleCancelledCI handles cancelled CI jobs based on classification
+// Returns: (newResult, shouldContinueFixLoop, error)
+func (o *Orchestrator) handleCancelledCI(
+	ctx context.Context,
+	prNumber int,
+	workingDir string,
+	ciResult *CIResult,
+	phaseState *PhaseState,
+) (*CIResult, bool, error) {
+	// Initialize history if needed
+	if phaseState.CIHistory == nil {
+		phaseState.CIHistory = &CIFailureHistory{}
 	}
 
-	fmt.Printf("\n%s CI jobs were cancelled (not failed). Attempting to rerun...\n", Yellow("⚠"))
+	// Classify the result
+	classified := o.ciClassifier.ClassifyResult(ciResult, phaseState.CIHistory)
 
-	// Get latest run ID
-	runID, err := o.ghRunner.GetLatestRunID(ctx, workingDir, prNumber)
-	if err != nil {
-		return ciResult, fmt.Errorf("failed to get run ID for rerun: %w", err)
+	// Record this failure in history
+	phaseState.CIHistory.AddEntry(CIFailureHistoryEntry{
+		Timestamp:     time.Now(),
+		Category:      classified.Category,
+		FailedJobs:    ciResult.FailedJobs,
+		CancelledJobs: ciResult.CancelledJobs,
+		Attempt:       phaseState.Attempts,
+	})
+
+	// Check for persistent failure first
+	threshold := o.config.PersistentFailureThreshold
+	if threshold == 0 {
+		threshold = DefaultPersistentFailureThreshold
+	}
+	if phaseState.CIHistory.IsPersistentFailure(threshold) {
+		o.logger.Info("Persistent CI failure detected after %d identical failures", threshold)
+		// Don't auto-retry, let Claude analyze
+		return ciResult, true, nil
 	}
 
-	// Rerun cancelled jobs
-	if err := o.ghRunner.RunRerun(ctx, workingDir, runID); err != nil {
-		return ciResult, fmt.Errorf("failed to rerun cancelled jobs: %w", err)
+	// Handle based on classification
+	switch classified.Category {
+	case CategoryInfrastructure:
+		// Pure infrastructure issue - auto-retry once
+		o.logger.Info("CI failure classified as infrastructure issue - auto-retrying")
+
+		runID, err := o.ghRunner.GetLatestRunID(ctx, workingDir, prNumber)
+		if err != nil {
+			o.logger.Info("Failed to get latest run ID for auto-retry: %v", err)
+			return ciResult, true, nil
+		}
+
+		if err := o.ghRunner.RunRerun(ctx, workingDir, runID); err != nil {
+			o.logger.Info("Failed to rerun CI for auto-retry: %v", err)
+			return ciResult, true, nil
+		}
+
+		ciChecker := o.getCIChecker(workingDir)
+		newResult, err := ciChecker.WaitForCIWithProgress(ctx, prNumber, o.config.CICheckTimeout, CheckCIOptions{}, nil)
+		if err != nil {
+			o.logger.Info("CI check failed during auto-retry: %v", err)
+			return ciResult, true, nil
+		}
+
+		if newResult.Passed {
+			return newResult, false, nil // Success! No need to continue fix loop
+		}
+
+		// Still failing - classify again and continue to fix loop
+		return newResult, true, nil
+
+	case CategoryCodeRelated, CategoryMixed, CategoryPersistent:
+		// Code-related issues - don't auto-retry, let Claude fix
+		o.logger.Info("CI failure classified as %s - requires code analysis", classified.Category)
+		return ciResult, true, nil
+
+	default:
+		return ciResult, true, nil
 	}
-
-	fmt.Printf("%s Cancelled jobs rerun triggered. Waiting for CI...\n", Green("✓"))
-
-	// Wait for CI again
-	ciSpinner := NewCISpinner("Waiting for CI to complete after rerun")
-	ciSpinner.Start()
-
-	ciChecker := o.getCIChecker(workingDir)
-	newResult, err := ciChecker.WaitForCIWithProgress(ctx, prNumber, o.config.CICheckTimeout, CheckCIOptions{}, ciSpinner.OnProgress)
-	if err != nil {
-		ciSpinner.Fail("CI check failed")
-		return ciResult, fmt.Errorf("failed to check CI after rerun: %w", err)
-	}
-
-	if newResult.Passed {
-		ciSpinner.Success("CI passed after rerun")
-	} else {
-		ciSpinner.Fail("CI failed after rerun")
-	}
-
-	return newResult, nil
 }
 
-// getCIChecker creates or retrieves a CIChecker for the given working directory
 func (o *Orchestrator) getCIChecker(workingDir string) CIChecker {
 	if o.ciCheckerFactory != nil {
 		return o.ciCheckerFactory(workingDir, o.config.CICheckInterval, o.config.GHCommandTimeout)
 	}
-	return NewCIChecker(workingDir, o.config.CICheckInterval, o.config.GHCommandTimeout)
+	return NewCIChecker(
+		workingDir,
+		WithCheckInterval(o.config.CICheckInterval),
+		WithCommandTimeout(o.config.GHCommandTimeout),
+	)
 }
