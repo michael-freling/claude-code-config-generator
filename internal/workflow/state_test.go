@@ -120,7 +120,10 @@ func TestFileStateManager_WorkflowExists(t *testing.T) {
 			name:         "returns true for existing workflow",
 			workflowName: "existing",
 			setup: func(sm StateManager) {
-				sm.InitState("existing", "test description", WorkflowTypeFeature)
+				_, err := sm.InitState("existing", "test description", WorkflowTypeFeature)
+				if err != nil {
+					panic(err)
+				}
 			},
 			want: true,
 		},
@@ -208,7 +211,8 @@ func TestFileStateManager_InitState(t *testing.T) {
 			sm := NewStateManager(tmpDir)
 
 			if tt.name == "returns error for existing workflow" {
-				sm.InitState(tt.workflowName, tt.description, tt.wfType)
+				_, err := sm.InitState(tt.workflowName, tt.description, tt.wfType)
+				require.NoError(t, err)
 			}
 
 			got, err := sm.InitState(tt.workflowName, tt.description, tt.wfType)
@@ -499,9 +503,10 @@ func TestFileStateManager_SaveAndLoadPlan(t *testing.T) {
 			sm := NewStateManager(tmpDir)
 
 			workflowName := "test-workflow"
-			sm.InitState(workflowName, "test", WorkflowTypeFeature)
+			_, err := sm.InitState(workflowName, "test", WorkflowTypeFeature)
+			require.NoError(t, err)
 
-			err := sm.SavePlan(workflowName, tt.plan)
+			err = sm.SavePlan(workflowName, tt.plan)
 			require.NoError(t, err)
 
 			got, err := sm.LoadPlan(workflowName)
@@ -536,7 +541,10 @@ func TestFileStateManager_LoadPlan_Errors(t *testing.T) {
 			workflowName: "test-workflow",
 			setup: func(tmpDir string) {
 				sm := NewStateManager(tmpDir)
-				sm.InitState("test-workflow", "test", WorkflowTypeFeature)
+				_, err := sm.InitState("test-workflow", "test", WorkflowTypeFeature)
+				if err != nil {
+					panic(err)
+				}
 			},
 			wantErr:     true,
 			errContains: "failed to read plan file",
@@ -681,9 +689,10 @@ Estimated: 2 weeks`,
 			sm := NewStateManager(tmpDir)
 
 			workflowName := "test-workflow"
-			sm.InitState(workflowName, "test", WorkflowTypeFeature)
+			_, err := sm.InitState(workflowName, "test", WorkflowTypeFeature)
+			require.NoError(t, err)
 
-			err := sm.SavePlanMarkdown(workflowName, tt.markdown)
+			err = sm.SavePlanMarkdown(workflowName, tt.markdown)
 			require.NoError(t, err)
 
 			planPath := filepath.Join(sm.WorkflowDir(workflowName), "plan.md")
@@ -767,9 +776,10 @@ func TestFileStateManager_SaveAndLoadPhaseOutput(t *testing.T) {
 			sm := NewStateManager(tmpDir)
 
 			workflowName := "test-workflow"
-			sm.InitState(workflowName, "test", WorkflowTypeFeature)
+			_, err := sm.InitState(workflowName, "test", WorkflowTypeFeature)
+			require.NoError(t, err)
 
-			err := sm.SavePhaseOutput(workflowName, tt.phase, tt.data)
+			err = sm.SavePhaseOutput(workflowName, tt.phase, tt.data)
 			require.NoError(t, err)
 
 			var got ImplementationSummary
@@ -922,7 +932,10 @@ func TestFileStateManager_LoadPhaseOutput_Errors(t *testing.T) {
 			phase:        PhaseImplementation,
 			setup: func(tmpDir string) {
 				sm := NewStateManager(tmpDir)
-				sm.InitState("test-workflow", "test", WorkflowTypeFeature)
+				_, err := sm.InitState("test-workflow", "test", WorkflowTypeFeature)
+				if err != nil {
+					panic(err)
+				}
 			},
 			wantErr:     true,
 			errContains: "failed to read phase output",
@@ -977,8 +990,14 @@ func TestFileStateManager_ListWorkflows(t *testing.T) {
 		{
 			name: "returns list of workflows",
 			setup: func(sm StateManager) {
-				sm.InitState("workflow1", "test1", WorkflowTypeFeature)
-				sm.InitState("workflow2", "test2", WorkflowTypeFix)
+				_, err := sm.InitState("workflow1", "test1", WorkflowTypeFeature)
+				if err != nil {
+					panic(err)
+				}
+				_, err = sm.InitState("workflow2", "test2", WorkflowTypeFix)
+				if err != nil {
+					panic(err)
+				}
 			},
 			wantCount: 2,
 		},
@@ -1010,7 +1029,10 @@ func TestFileStateManager_DeleteWorkflow(t *testing.T) {
 			name:         "deletes workflow successfully",
 			workflowName: "test-workflow",
 			setup: func(sm StateManager) {
-				sm.InitState("test-workflow", "test", WorkflowTypeFeature)
+				_, err := sm.InitState("test-workflow", "test", WorkflowTypeFeature)
+				if err != nil {
+					panic(err)
+				}
 			},
 			wantErr: false,
 		},
