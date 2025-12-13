@@ -1437,6 +1437,72 @@ exit 127`,
 	}
 }
 
+func TestFormatNumber(t *testing.T) {
+	tests := []struct {
+		name string
+		n    int
+		want string
+	}{
+		{
+			name: "formats single digit",
+			n:    5,
+			want: "5",
+		},
+		{
+			name: "formats two digit",
+			n:    42,
+			want: "42",
+		},
+		{
+			name: "formats three digit",
+			n:    999,
+			want: "999",
+		},
+		{
+			name: "formats exactly 1000",
+			n:    1000,
+			want: "1,000",
+		},
+		{
+			name: "formats thousands",
+			n:    1234,
+			want: "1,234",
+		},
+		{
+			name: "formats tens of thousands",
+			n:    12345,
+			want: "12,345",
+		},
+		{
+			name: "formats hundreds of thousands",
+			n:    123456,
+			want: "123,456",
+		},
+		{
+			name: "formats millions",
+			n:    1234567,
+			want: "1,234,567",
+		},
+		{
+			name: "formats tens of millions",
+			n:    12345678,
+			want: "12,345,678",
+		},
+		{
+			name: "formats zero",
+			n:    0,
+			want: "0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatNumber(tt.n)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestClaudeExecutor_Execute_PromptTooLong(t *testing.T) {
 	tmpDir := t.TempDir()
 
