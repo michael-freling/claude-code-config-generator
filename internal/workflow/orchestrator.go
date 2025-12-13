@@ -13,7 +13,6 @@ import (
 	"github.com/michael-freling/claude-code-tools/internal/command"
 )
 
-
 // Config holds configuration for the orchestrator
 type Config struct {
 	BaseDir                    string
@@ -1397,4 +1396,3 @@ func (o *Orchestrator) getCIChecker(workingDir string) CIChecker {
 	}
 	return NewCIChecker(workingDir, o.config.CICheckInterval, o.config.GHCommandTimeout)
 }
-
