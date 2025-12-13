@@ -13,21 +13,70 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func setupTestDir(t *testing.T) string {
+	t.Helper()
+	tmpDir := t.TempDir()
+	baseDir := filepath.Join(tmpDir, "test")
+	require.NoError(t, os.MkdirAll(baseDir, 0755))
+	return baseDir
+}
+
+func setupStateManagerMock(t *testing.T, workflowName string, implData *ImplementationSummary, implLoadErr error, splitData *PRSplitResult, splitLoadErr error) *MockStateManager {
+	t.Helper()
+	mockStateManager := &MockStateManager{}
+
+	if implLoadErr != nil {
+		mockStateManager.On("LoadPhaseOutput", workflowName, PhaseImplementation, &ImplementationSummary{}).
+			Return(implLoadErr)
+	} else if implData != nil {
+		mockStateManager.On("LoadPhaseOutput", workflowName, PhaseImplementation, &ImplementationSummary{}).
+			Run(func(args mock.Arguments) {
+				target := args.Get(2).(*ImplementationSummary)
+				*target = *implData
+			}).
+			Return(nil)
+	}
+
+	if splitLoadErr != nil {
+		mockStateManager.On("LoadPhaseOutput", workflowName, PhasePRSplit, &PRSplitResult{}).
+			Return(splitLoadErr)
+	} else if splitData != nil {
+		mockStateManager.On("LoadPhaseOutput", workflowName, PhasePRSplit, &PRSplitResult{}).
+			Run(func(args mock.Arguments) {
+				target := args.Get(2).(*PRSplitResult)
+				*target = *splitData
+			}).
+			Return(nil)
+	}
+
+	return mockStateManager
+}
+
+func newTestOrchestrator(baseDir string, stateManager *MockStateManager, gitRunner *MockGitRunner, ghRunner *MockGhRunner, logger Logger) *Orchestrator {
+	config := DefaultConfig(baseDir)
+	return &Orchestrator{
+		stateManager: stateManager,
+		gitRunner:    gitRunner,
+		ghRunner:     ghRunner,
+		logger:       logger,
+		config:       config,
+	}
+}
+
 func TestGatherSummaryData(t *testing.T) {
 	tests := []struct {
-		name               string
-		workflowName       string
-		implData           *ImplementationSummary
-		implLoadErr        error
-		splitData          *PRSplitResult
-		splitLoadErr       error
-		singlePRData       *PRInfo
-		singlePRErr        error
-		setupGitRunner     func(*MockGitRunner)
-		setupGhRunner      func(*MockGhRunner)
-		want               *WorkflowSummary
-		wantErr            bool
-		skipSinglePRLookup bool
+		name           string
+		workflowName   string
+		implData       *ImplementationSummary
+		implLoadErr    error
+		splitData      *PRSplitResult
+		splitLoadErr   error
+		singlePRData   *PRInfo
+		singlePRErr    error
+		setupGitRunner func(*MockGitRunner)
+		setupGhRunner  func(*MockGhRunner)
+		want           *WorkflowSummary
+		wantErr        bool
 	}{
 		{
 			name:         "all data available with split PR",
@@ -91,7 +140,6 @@ func TestGatherSummaryData(t *testing.T) {
 				TestsAdded:   10,
 				Phases:       []PhaseStats{},
 			},
-			skipSinglePRLookup: true,
 		},
 		{
 			name:         "single PR workflow",
@@ -246,38 +294,11 @@ func TestGatherSummaryData(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tmpDir := t.TempDir()
-			baseDir := filepath.Join(tmpDir, "test")
-			require.NoError(t, os.MkdirAll(baseDir, 0755))
-
-			mockStateManager := &MockStateManager{}
+			baseDir := setupTestDir(t)
+			mockStateManager := setupStateManagerMock(t, tt.workflowName, tt.implData, tt.implLoadErr, tt.splitData, tt.splitLoadErr)
 			mockGitRunner := &MockGitRunner{}
 			mockGhRunner := &MockGhRunner{}
 			mockLogger := NewLogger(LogLevelNormal)
-
-			if tt.implLoadErr != nil {
-				mockStateManager.On("LoadPhaseOutput", tt.workflowName, PhaseImplementation, &ImplementationSummary{}).
-					Return(tt.implLoadErr)
-			} else if tt.implData != nil {
-				mockStateManager.On("LoadPhaseOutput", tt.workflowName, PhaseImplementation, &ImplementationSummary{}).
-					Run(func(args mock.Arguments) {
-						target := args.Get(2).(*ImplementationSummary)
-						*target = *tt.implData
-					}).
-					Return(nil)
-			}
-
-			if tt.splitLoadErr != nil {
-				mockStateManager.On("LoadPhaseOutput", tt.workflowName, PhasePRSplit, &PRSplitResult{}).
-					Return(tt.splitLoadErr)
-			} else if tt.splitData != nil {
-				mockStateManager.On("LoadPhaseOutput", tt.workflowName, PhasePRSplit, &PRSplitResult{}).
-					Run(func(args mock.Arguments) {
-						target := args.Get(2).(*PRSplitResult)
-						*target = *tt.splitData
-					}).
-					Return(nil)
-			}
 
 			if tt.setupGitRunner != nil {
 				tt.setupGitRunner(mockGitRunner)
@@ -287,14 +308,7 @@ func TestGatherSummaryData(t *testing.T) {
 				tt.setupGhRunner(mockGhRunner)
 			}
 
-			config := DefaultConfig(baseDir)
-			o := &Orchestrator{
-				stateManager: mockStateManager,
-				gitRunner:    mockGitRunner,
-				ghRunner:     mockGhRunner,
-				logger:       mockLogger,
-				config:       config,
-			}
+			o := newTestOrchestrator(baseDir, mockStateManager, mockGitRunner, mockGhRunner, mockLogger)
 
 			got, err := gatherSummaryData(context.Background(), o, tt.workflowName)
 
@@ -415,10 +429,7 @@ func TestGetSinglePRInfo(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tmpDir := t.TempDir()
-			baseDir := filepath.Join(tmpDir, "test")
-			require.NoError(t, os.MkdirAll(baseDir, 0755))
-
+			baseDir := setupTestDir(t)
 			mockGitRunner := &MockGitRunner{}
 			mockGhRunner := &MockGhRunner{}
 			mockLogger := NewLogger(LogLevelNormal)
@@ -431,13 +442,7 @@ func TestGetSinglePRInfo(t *testing.T) {
 				tt.setupGhRunner(mockGhRunner)
 			}
 
-			config := DefaultConfig(baseDir)
-			o := &Orchestrator{
-				gitRunner: mockGitRunner,
-				ghRunner:  mockGhRunner,
-				logger:    mockLogger,
-				config:    config,
-			}
+			o := newTestOrchestrator(baseDir, nil, mockGitRunner, mockGhRunner, mockLogger)
 
 			got, err := getSinglePRInfo(context.Background(), o)
 
@@ -842,38 +847,11 @@ func TestDisplayWorkflowSummary(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tmpDir := t.TempDir()
-			baseDir := filepath.Join(tmpDir, "test")
-			require.NoError(t, os.MkdirAll(baseDir, 0755))
-
-			mockStateManager := &MockStateManager{}
+			baseDir := setupTestDir(t)
+			mockStateManager := setupStateManagerMock(t, tt.workflowName, tt.implData, tt.implLoadErr, tt.splitData, tt.splitLoadErr)
 			mockGitRunner := &MockGitRunner{}
 			mockGhRunner := &MockGhRunner{}
 			mockLogger := NewLogger(LogLevelVerbose)
-
-			if tt.implLoadErr != nil {
-				mockStateManager.On("LoadPhaseOutput", tt.workflowName, PhaseImplementation, &ImplementationSummary{}).
-					Return(tt.implLoadErr)
-			} else if tt.implData != nil {
-				mockStateManager.On("LoadPhaseOutput", tt.workflowName, PhaseImplementation, &ImplementationSummary{}).
-					Run(func(args mock.Arguments) {
-						target := args.Get(2).(*ImplementationSummary)
-						*target = *tt.implData
-					}).
-					Return(nil)
-			}
-
-			if tt.splitLoadErr != nil {
-				mockStateManager.On("LoadPhaseOutput", tt.workflowName, PhasePRSplit, &PRSplitResult{}).
-					Return(tt.splitLoadErr)
-			} else if tt.splitData != nil {
-				mockStateManager.On("LoadPhaseOutput", tt.workflowName, PhasePRSplit, &PRSplitResult{}).
-					Run(func(args mock.Arguments) {
-						target := args.Get(2).(*PRSplitResult)
-						*target = *tt.splitData
-					}).
-					Return(nil)
-			}
 
 			if tt.setupGitRunner != nil {
 				tt.setupGitRunner(mockGitRunner)
@@ -883,14 +861,7 @@ func TestDisplayWorkflowSummary(t *testing.T) {
 				tt.setupGhRunner(mockGhRunner)
 			}
 
-			config := DefaultConfig(baseDir)
-			o := &Orchestrator{
-				stateManager: mockStateManager,
-				gitRunner:    mockGitRunner,
-				ghRunner:     mockGhRunner,
-				logger:       mockLogger,
-				config:       config,
-			}
+			o := newTestOrchestrator(baseDir, mockStateManager, mockGitRunner, mockGhRunner, mockLogger)
 
 			o.displayWorkflowSummary(context.Background(), tt.workflowName)
 

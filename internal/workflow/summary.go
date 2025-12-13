@@ -4,6 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
+)
+
+const (
+	summaryHeaderSep = "═══════════════════════════════════════════════════"
 )
 
 // gatherSummaryData collects and aggregates workflow execution data into a comprehensive summary
@@ -86,34 +91,40 @@ func formatWorkflowSummary(summary *WorkflowSummary) string {
 		return ""
 	}
 
-	var result string
+	var b strings.Builder
 
-	result += "═══════════════════════════════════════════════════\n"
-	result += Bold("Workflow Summary: ") + summary.WorkflowName + "\n"
-	result += "═══════════════════════════════════════════════════\n"
-	result += "\n"
+	b.WriteString(summaryHeaderSep)
+	b.WriteString("\n")
+	b.WriteString(Bold("Workflow Summary: "))
+	b.WriteString(summary.WorkflowName)
+	b.WriteString("\n")
+	b.WriteString(summaryHeaderSep)
+	b.WriteString("\n")
+	b.WriteString("\n")
 
 	prSection := formatPRSection(summary)
 	if prSection != "" {
-		result += prSection
-		result += "\n"
+		b.WriteString(prSection)
+		b.WriteString("\n")
 	}
 
 	statsSection := formatStatsSection(summary)
 	if statsSection != "" {
-		result += statsSection
-		result += "\n"
+		b.WriteString(statsSection)
+		b.WriteString("\n")
 	}
 
 	phaseTimings := formatPhaseTimings(summary)
 	if phaseTimings != "" {
-		result += phaseTimings
-		result += "\n"
+		b.WriteString(phaseTimings)
+		b.WriteString("\n")
 	}
 
-	result += Bold("Total Duration: ") + Yellow(FormatDuration(summary.TotalDuration)) + "\n"
+	b.WriteString(Bold("Total Duration: "))
+	b.WriteString(Yellow(FormatDuration(summary.TotalDuration)))
+	b.WriteString("\n")
 
-	return result
+	return b.String()
 }
 
 // formatPRSection formats the PR information section
@@ -122,38 +133,39 @@ func formatPRSection(summary *WorkflowSummary) string {
 		return ""
 	}
 
-	var result string
-	result += Bold("Pull Requests:") + "\n"
+	var b strings.Builder
+	b.WriteString(Bold("Pull Requests:"))
+	b.WriteString("\n")
 
 	switch summary.PRType {
 	case PRSummaryTypeSingle:
 		if summary.MainPR != nil {
-			result += fmt.Sprintf("  Main PR: %s - %s\n",
+			b.WriteString(fmt.Sprintf("  Main PR: %s - %s\n",
 				Cyan(fmt.Sprintf("#%d", summary.MainPR.Number)),
-				summary.MainPR.Title)
-			result += fmt.Sprintf("          %s\n", Cyan(summary.MainPR.URL))
+				summary.MainPR.Title))
+			b.WriteString(fmt.Sprintf("          %s\n", Cyan(summary.MainPR.URL)))
 		}
 
 	case PRSummaryTypeSplit:
 		if summary.MainPR != nil {
-			result += fmt.Sprintf("  Main PR: %s - %s\n",
+			b.WriteString(fmt.Sprintf("  Main PR: %s - %s\n",
 				Cyan(fmt.Sprintf("#%d", summary.MainPR.Number)),
-				summary.MainPR.Title)
-			result += fmt.Sprintf("          %s\n\n", Cyan(summary.MainPR.URL))
+				summary.MainPR.Title))
+			b.WriteString(fmt.Sprintf("          %s\n\n", Cyan(summary.MainPR.URL)))
 		}
 
 		if len(summary.ChildPRs) > 0 {
-			result += "  Child PRs:\n"
+			b.WriteString("  Child PRs:\n")
 			for _, pr := range summary.ChildPRs {
-				result += fmt.Sprintf("    • %s - %s\n",
+				b.WriteString(fmt.Sprintf("    • %s - %s\n",
 					Cyan(fmt.Sprintf("#%d", pr.Number)),
-					pr.Title)
-				result += fmt.Sprintf("      %s\n", Cyan(pr.URL))
+					pr.Title))
+				b.WriteString(fmt.Sprintf("      %s\n", Cyan(pr.URL)))
 			}
 		}
 	}
 
-	return result
+	return b.String()
 }
 
 // formatStatsSection formats the implementation statistics section
@@ -167,14 +179,15 @@ func formatStatsSection(summary *WorkflowSummary) string {
 		return ""
 	}
 
-	var result string
-	result += Bold("Implementation Stats:") + "\n"
-	result += fmt.Sprintf("  Files Changed: %s\n", Green(fmt.Sprintf("%d", len(summary.FilesChanged))))
-	result += fmt.Sprintf("  Lines Added:   %s\n", Green(fmt.Sprintf("+%d", summary.LinesAdded)))
-	result += fmt.Sprintf("  Lines Removed: %s\n", fmt.Sprintf("-%d", summary.LinesRemoved))
-	result += fmt.Sprintf("  Tests Added:   %s\n", Green(fmt.Sprintf("%d", summary.TestsAdded)))
+	var b strings.Builder
+	b.WriteString(Bold("Implementation Stats:"))
+	b.WriteString("\n")
+	b.WriteString(fmt.Sprintf("  Files Changed: %s\n", Green(fmt.Sprintf("%d", len(summary.FilesChanged)))))
+	b.WriteString(fmt.Sprintf("  Lines Added:   %s\n", Green(fmt.Sprintf("+%d", summary.LinesAdded))))
+	b.WriteString(fmt.Sprintf("  Lines Removed: %s\n", fmt.Sprintf("-%d", summary.LinesRemoved)))
+	b.WriteString(fmt.Sprintf("  Tests Added:   %s\n", Green(fmt.Sprintf("%d", summary.TestsAdded))))
 
-	return result
+	return b.String()
 }
 
 // formatPhaseTimings formats the phase execution details section
@@ -183,8 +196,9 @@ func formatPhaseTimings(summary *WorkflowSummary) string {
 		return ""
 	}
 
-	var result string
-	result += Bold("Phase Execution:") + "\n"
+	var b strings.Builder
+	b.WriteString(Bold("Phase Execution:"))
+	b.WriteString("\n")
 
 	for _, phase := range summary.Phases {
 		statusIcon := Green("✓")
@@ -197,14 +211,14 @@ func formatPhaseTimings(summary *WorkflowSummary) string {
 			attemptStr = fmt.Sprintf("%d attempts", phase.Attempts)
 		}
 
-		result += fmt.Sprintf("  %s %s    %s (%s)\n",
+		b.WriteString(fmt.Sprintf("  %s %s    %s (%s)\n",
 			statusIcon,
 			phase.Name,
 			Yellow(FormatDuration(phase.Duration)),
-			attemptStr)
+			attemptStr))
 	}
 
-	return result
+	return b.String()
 }
 
 // displayWorkflowSummary gathers and displays the workflow execution summary
