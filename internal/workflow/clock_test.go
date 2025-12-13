@@ -311,6 +311,44 @@ func TestRealClock_NewTicker(t *testing.T) {
 	assert.True(t, elapsed >= 1*time.Millisecond, "Ticker should fire after at least 1ms")
 }
 
+func TestRealTimer_Reset(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping slow test in short mode")
+	}
+
+	clock := NewRealClock()
+	timer := clock.NewTimer(100 * time.Millisecond)
+
+	// Reset before firing
+	wasActive := timer.Reset(1 * time.Millisecond)
+	assert.True(t, wasActive, "Reset should return true for active timer")
+
+	start := time.Now()
+	<-timer.C()
+	elapsed := time.Since(start)
+
+	// Should fire after ~1ms, not 100ms
+	assert.True(t, elapsed >= 1*time.Millisecond, "Timer should fire after reset duration")
+	assert.True(t, elapsed < 50*time.Millisecond, "Timer should have fired with new duration, not original")
+}
+
+func TestRealTimer_Stop(t *testing.T) {
+	clock := NewRealClock()
+	timer := clock.NewTimer(100 * time.Millisecond)
+
+	// Stop the timer
+	wasActive := timer.Stop()
+	assert.True(t, wasActive, "Stop should return true for active timer")
+
+	// Try to receive - should not get anything since timer was stopped
+	select {
+	case <-timer.C():
+		t.Fatal("stopped timer should not fire")
+	case <-time.After(10 * time.Millisecond):
+		// Expected - timer was stopped
+	}
+}
+
 // Tests for fake clock
 func TestFakeClock_Now(t *testing.T) {
 	start := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
