@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+const ClaudeResumeFlag = "--resume"
+
 // SessionManager handles Claude CLI session lifecycle
 type SessionManager struct {
 	logger Logger
@@ -27,9 +29,6 @@ func NewSessionManager(logger Logger) *SessionManager {
 	}
 }
 
-// ParseSessionID extracts session ID from Claude CLI stream-json output
-// It looks for session ID in the result chunk or system chunks
-// Returns empty string if no session ID found
 func (m *SessionManager) ParseSessionID(output string) string {
 	if output == "" {
 		return ""
@@ -68,7 +67,6 @@ func (m *SessionManager) ParseSessionID(output string) string {
 	return sessionID
 }
 
-// extractSessionIDFromChunk extracts session ID from a parsed JSON chunk
 func (m *SessionManager) extractSessionIDFromChunk(chunk map[string]interface{}) string {
 	chunkType, _ := chunk["type"].(string)
 
@@ -91,7 +89,6 @@ func (m *SessionManager) extractSessionIDFromChunk(chunk map[string]interface{})
 	return ""
 }
 
-// extractSessionIDWithRegex uses regex to find session_id patterns
 func (m *SessionManager) extractSessionIDWithRegex(output string) string {
 	// Pattern 1: "session_id":"..."
 	re1 := regexp.MustCompile(`"session_id"\s*:\s*"([^"]+)"`)
@@ -108,9 +105,7 @@ func (m *SessionManager) extractSessionIDWithRegex(output string) string {
 	return ""
 }
 
-// BuildCommandArgs constructs Claude CLI arguments with session reuse
-// If sessionID is provided and not empty, adds --resume flag
-// Returns the additional args to append to the command
+// BuildCommandArgs adds --resume flag if sessionID is provided and not forcing new session
 func (m *SessionManager) BuildCommandArgs(sessionID string, forceNewSession bool) []string {
 	if forceNewSession || sessionID == "" {
 		return nil
@@ -120,11 +115,10 @@ func (m *SessionManager) BuildCommandArgs(sessionID string, forceNewSession bool
 		m.logger.Verbose("Reusing Claude session: %s", sessionID)
 	}
 
-	return []string{"--resume", sessionID}
+	return []string{ClaudeResumeFlag, sessionID}
 }
 
-// GetSessionFromState extracts session info from workflow state
-// Returns nil if no session exists
+// GetSessionFromState returns nil if no session exists in state
 func (m *SessionManager) GetSessionFromState(state *WorkflowState) *SessionInfo {
 	if state == nil || state.SessionID == nil || *state.SessionID == "" {
 		return nil
@@ -143,8 +137,7 @@ func (m *SessionManager) GetSessionFromState(state *WorkflowState) *SessionInfo 
 	return info
 }
 
-// UpdateStateWithSession updates the workflow state with session info
-// Increments reuse count if session already exists
+// UpdateStateWithSession increments reuse count if session already exists
 func (m *SessionManager) UpdateStateWithSession(state *WorkflowState, sessionID string, isNew bool) {
 	if state == nil || sessionID == "" {
 		return

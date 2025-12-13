@@ -89,35 +89,39 @@ type ExecuteResult struct {
 
 // claudeExecutor implements ClaudeExecutor interface
 type claudeExecutor struct {
-	claudePath string
-	cmdRunner  command.Runner
-	logger     Logger
+	claudePath     string
+	cmdRunner      command.Runner
+	logger         Logger
+	sessionManager *SessionManager
 }
 
 // NewClaudeExecutor creates executor with default settings
 func NewClaudeExecutor(logger Logger) ClaudeExecutor {
 	return &claudeExecutor{
-		claudePath: "claude",
-		cmdRunner:  command.NewRunner(),
-		logger:     logger,
+		claudePath:     "claude",
+		cmdRunner:      command.NewRunner(),
+		logger:         logger,
+		sessionManager: NewSessionManager(logger),
 	}
 }
 
 // NewClaudeExecutorWithPath creates executor with custom claude path
 func NewClaudeExecutorWithPath(claudePath string, logger Logger) ClaudeExecutor {
 	return &claudeExecutor{
-		claudePath: claudePath,
-		cmdRunner:  command.NewRunner(),
-		logger:     logger,
+		claudePath:     claudePath,
+		cmdRunner:      command.NewRunner(),
+		logger:         logger,
+		sessionManager: NewSessionManager(logger),
 	}
 }
 
 // NewClaudeExecutorWithRunner creates executor with custom command runner (for testing)
 func NewClaudeExecutorWithRunner(claudePath string, cmdRunner command.Runner, logger Logger) ClaudeExecutor {
 	return &claudeExecutor{
-		claudePath: claudePath,
-		cmdRunner:  cmdRunner,
-		logger:     logger,
+		claudePath:     claudePath,
+		cmdRunner:      cmdRunner,
+		logger:         logger,
+		sessionManager: NewSessionManager(logger),
 	}
 }
 
@@ -317,12 +321,10 @@ func (e *claudeExecutor) ExecuteStreaming(ctx context.Context, config ExecuteCon
 	if config.JSONSchema != "" {
 		args = append(args, "--json-schema", config.JSONSchema)
 	}
-	// Add session resume args if session ID is provided and not forcing new session
-	if !config.ForceNewSession && config.SessionID != "" {
-		args = append(args, "--resume", config.SessionID)
-		if e.logger != nil {
-			e.logger.Verbose("Resuming Claude session: %s", config.SessionID)
-		}
+	// Add session resume args if session ID is provided
+	sessionArgs := e.sessionManager.BuildCommandArgs(config.SessionID, config.ForceNewSession)
+	if len(sessionArgs) > 0 {
+		args = append(args, sessionArgs...)
 	}
 	args = append(args, config.Prompt)
 

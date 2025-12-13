@@ -338,14 +338,7 @@ func (o *Orchestrator) executePlanning(ctx context.Context, state *WorkflowState
 
 	o.logger.Verbose("Generated planning prompt (%d characters)", len(prompt))
 
-	sessionInfo := o.sessionManager.GetSessionFromState(state)
-	var sessionID string
-	if sessionInfo != nil {
-		sessionID = sessionInfo.SessionID
-		o.logger.Verbose("Resuming session: %s (reuse count: %d)", sessionInfo.SessionID, sessionInfo.ReuseCount)
-	} else {
-		o.logger.Verbose("Starting new session")
-	}
+	sessionID := o.getSessionIDWithLogging(state)
 
 	spinner := NewStreamingSpinnerWithLogger("Analyzing codebase...", o.logger)
 	spinner.Start()
@@ -424,6 +417,7 @@ func (o *Orchestrator) executePlanning(ctx context.Context, state *WorkflowState
 	// Parse session ID from output and update state
 	newSessionID := o.sessionManager.ParseSessionID(result.RawOutput)
 	if newSessionID != "" {
+		sessionInfo := o.sessionManager.GetSessionFromState(state)
 		isNew := sessionInfo == nil || sessionInfo.SessionID != newSessionID
 		o.sessionManager.UpdateStateWithSession(state, newSessionID, isNew)
 	}
@@ -509,14 +503,7 @@ func (o *Orchestrator) executeImplementation(ctx context.Context, state *Workflo
 		fmt.Printf("%s Resuming from CI failure, skipping to CI fix...\n", Yellow("⚠"))
 	}
 
-	sessionInfo := o.sessionManager.GetSessionFromState(state)
-	var sessionID string
-	if sessionInfo != nil {
-		sessionID = sessionInfo.SessionID
-		o.logger.Verbose("Resuming session: %s (reuse count: %d)", sessionInfo.SessionID, sessionInfo.ReuseCount)
-	} else {
-		o.logger.Verbose("Starting new session")
-	}
+	sessionID := o.getSessionIDWithLogging(state)
 
 	for attempt := startAttempt; attempt <= o.config.MaxFixAttempts; attempt++ {
 		phaseState.Attempts = attempt
@@ -598,6 +585,7 @@ func (o *Orchestrator) executeImplementation(ctx context.Context, state *Workflo
 		// Parse session ID from output and update state
 		newSessionID := o.sessionManager.ParseSessionID(result.RawOutput)
 		if newSessionID != "" {
+			sessionInfo := o.sessionManager.GetSessionFromState(state)
 			isNew := sessionInfo == nil || sessionInfo.SessionID != newSessionID
 			o.sessionManager.UpdateStateWithSession(state, newSessionID, isNew)
 			sessionID = newSessionID
@@ -698,14 +686,7 @@ func (o *Orchestrator) executeRefactoring(ctx context.Context, state *WorkflowSt
 		fmt.Printf("%s Resuming from CI failure, skipping to CI fix...\n", Yellow("⚠"))
 	}
 
-	sessionInfo := o.sessionManager.GetSessionFromState(state)
-	var sessionID string
-	if sessionInfo != nil {
-		sessionID = sessionInfo.SessionID
-		o.logger.Verbose("Resuming session: %s (reuse count: %d)", sessionInfo.SessionID, sessionInfo.ReuseCount)
-	} else {
-		o.logger.Verbose("Starting new session")
-	}
+	sessionID := o.getSessionIDWithLogging(state)
 
 	for attempt := startAttempt; attempt <= o.config.MaxFixAttempts; attempt++ {
 		phaseState.Attempts = attempt
@@ -787,6 +768,7 @@ func (o *Orchestrator) executeRefactoring(ctx context.Context, state *WorkflowSt
 		// Parse session ID from output and update state
 		newSessionID := o.sessionManager.ParseSessionID(result.RawOutput)
 		if newSessionID != "" {
+			sessionInfo := o.sessionManager.GetSessionFromState(state)
 			isNew := sessionInfo == nil || sessionInfo.SessionID != newSessionID
 			o.sessionManager.UpdateStateWithSession(state, newSessionID, isNew)
 			sessionID = newSessionID
@@ -904,14 +886,7 @@ func (o *Orchestrator) executePRSplit(ctx context.Context, state *WorkflowState)
 	var prResult *PRSplitResult
 	var lastError string
 
-	sessionInfo := o.sessionManager.GetSessionFromState(state)
-	var sessionID string
-	if sessionInfo != nil {
-		sessionID = sessionInfo.SessionID
-		o.logger.Verbose("Resuming session: %s (reuse count: %d)", sessionInfo.SessionID, sessionInfo.ReuseCount)
-	} else {
-		o.logger.Verbose("Starting new session")
-	}
+	sessionID := o.getSessionIDWithLogging(state)
 
 	for attempt := 1; attempt <= o.config.MaxFixAttempts; attempt++ {
 		phaseState.Attempts = attempt
@@ -986,6 +961,7 @@ func (o *Orchestrator) executePRSplit(ctx context.Context, state *WorkflowState)
 		// Parse session ID from output and update state
 		newSessionID := o.sessionManager.ParseSessionID(result.RawOutput)
 		if newSessionID != "" {
+			sessionInfo := o.sessionManager.GetSessionFromState(state)
 			isNew := sessionInfo == nil || sessionInfo.SessionID != newSessionID
 			o.sessionManager.UpdateStateWithSession(state, newSessionID, isNew)
 			sessionID = newSessionID
@@ -1086,6 +1062,17 @@ func (o *Orchestrator) getWorkingDir(state *WorkflowState) string {
 	return o.config.BaseDir
 }
 
+// getSessionIDWithLogging extracts session ID from state with logging
+func (o *Orchestrator) getSessionIDWithLogging(state *WorkflowState) string {
+	sessionInfo := o.sessionManager.GetSessionFromState(state)
+	if sessionInfo != nil {
+		o.logger.Verbose("Resuming session: %s (reuse count: %d)", sessionInfo.SessionID, sessionInfo.ReuseCount)
+		return sessionInfo.SessionID
+	}
+	o.logger.Verbose("Starting new session")
+	return ""
+}
+
 // executePRCreation executes the PR creation sub-routine using Claude.
 // It attempts to create a PR for the current branch, or finds an existing PR.
 // Returns the PR number if created or found, or 0 if PR creation was skipped
@@ -1115,14 +1102,7 @@ func (o *Orchestrator) executePRCreation(ctx context.Context, state *WorkflowSta
 		return 0, fmt.Errorf("failed to generate PR creation prompt: %w", err)
 	}
 
-	sessionInfo := o.sessionManager.GetSessionFromState(state)
-	var sessionID string
-	if sessionInfo != nil {
-		sessionID = sessionInfo.SessionID
-		o.logger.Verbose("Resuming session: %s (reuse count: %d)", sessionInfo.SessionID, sessionInfo.ReuseCount)
-	} else {
-		o.logger.Verbose("Starting new session")
-	}
+	sessionID := o.getSessionIDWithLogging(state)
 
 	var lastError string
 	for attempt := 1; attempt <= maxPRCreationAttempts; attempt++ {
@@ -1179,6 +1159,7 @@ func (o *Orchestrator) executePRCreation(ctx context.Context, state *WorkflowSta
 		// Parse session ID from output and update state
 		newSessionID := o.sessionManager.ParseSessionID(result.RawOutput)
 		if newSessionID != "" {
+			sessionInfo := o.sessionManager.GetSessionFromState(state)
 			isNew := sessionInfo == nil || sessionInfo.SessionID != newSessionID
 			o.sessionManager.UpdateStateWithSession(state, newSessionID, isNew)
 			sessionID = newSessionID
