@@ -140,6 +140,10 @@ func (p *outputParser) ParsePRSplitPlan(jsonStr string) (*PRSplitPlan, error) {
 		return nil, fmt.Errorf("PR split plan missing required field 'summary': %w", ErrParseJSON)
 	}
 
+	if len(plan.ChildPRs) == 0 {
+		return nil, fmt.Errorf("plan must have at least one child PR: %w", ErrParseJSON)
+	}
+
 	return &plan, nil
 }
 
