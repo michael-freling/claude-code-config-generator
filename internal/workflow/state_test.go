@@ -341,20 +341,24 @@ func TestFileStateManager_SaveState_UpdatesTimestamp(t *testing.T) {
 	tmpDir := t.TempDir()
 	sm := NewStateManager(tmpDir)
 
+	currentTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	sm.SetTimeProvider(func() time.Time { return currentTime })
+
 	workflowName := "test-workflow"
 	state, err := sm.InitState(workflowName, "test", WorkflowTypeFeature)
 	require.NoError(t, err)
 
 	originalTime := state.UpdatedAt
-	time.Sleep(10 * time.Millisecond)
+	assert.Equal(t, currentTime, originalTime)
 
+	currentTime = currentTime.Add(1 * time.Second)
 	state.CurrentPhase = PhaseImplementation
 	err = sm.SaveState(workflowName, state)
 	require.NoError(t, err)
 
 	assert.True(t, state.UpdatedAt.After(originalTime))
+	assert.Equal(t, currentTime, state.UpdatedAt)
 }
-
 func TestFileStateManager_LoadState_Errors(t *testing.T) {
 	tests := []struct {
 		name         string
