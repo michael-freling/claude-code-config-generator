@@ -18,15 +18,24 @@ const (
 	prCreationRetryDelay  = 5 * time.Second
 )
 
+// PRMetadata contains GitHub-specific metadata extracted from user prompts
+// for PR creation. This includes issue references, labels, and project assignments.
+type PRMetadata struct {
+	Issues   []string `json:"issues,omitempty"`
+	Labels   []string `json:"labels,omitempty"`
+	Projects []string `json:"projects,omitempty"`
+}
+
 // PRCreationResult represents the result of a PR creation attempt.
 // It contains the PR number (if created or found), the status of the operation,
 // and a message explaining the result. The status can be "created" (new PR),
 // "exists" (PR already exists), "skipped" (no commits to create PR for), or
 // "failed" (PR creation failed).
 type PRCreationResult struct {
-	PRNumber int    `json:"prNumber"`
-	Status   string `json:"status"` // "created", "exists", "skipped", "failed"
-	Message  string `json:"message"`
+	PRNumber int         `json:"prNumber"`
+	Status   string      `json:"status"` // "created", "exists", "skipped", "failed"
+	Message  string      `json:"message"`
+	Metadata *PRMetadata `json:"metadata,omitempty"`
 }
 
 // PRCreationResultSchema is the JSON schema for Claude's PR creation output
@@ -35,7 +44,28 @@ var PRCreationResultSchema = `{
     "properties": {
         "prNumber": {"type": "integer", "description": "The PR number if created or found"},
         "status": {"type": "string", "enum": ["created", "exists", "skipped", "failed"], "description": "The result status"},
-        "message": {"type": "string", "description": "A message explaining the result"}
+        "message": {"type": "string", "description": "A message explaining the result"},
+        "metadata": {
+            "type": "object",
+            "description": "Optional GitHub metadata extracted from user prompts",
+            "properties": {
+                "issues": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Issue references like '#123', 'fixes #456', 'closes #789'"
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Label names to apply to the PR like 'bug', 'enhancement', 'documentation'"
+                },
+                "projects": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Project names to add the PR to like 'Q1 Planning', 'Roadmap'"
+                }
+            }
+        }
     },
     "required": ["status", "message"]
 }`
@@ -1053,11 +1083,13 @@ func (o *Orchestrator) executePRCreation(ctx context.Context, state *WorkflowSta
 		case "created":
 			spinner.Success(fmt.Sprintf("PR #%d created", prResult.PRNumber))
 			o.logger.Verbose("PR creation successful: #%d - %s", prResult.PRNumber, prResult.Message)
+			o.logPRMetadata(prResult.Metadata)
 			return prResult.PRNumber, nil
 
 		case "exists":
 			spinner.Success(fmt.Sprintf("PR #%d already exists", prResult.PRNumber))
 			o.logger.Verbose("PR already exists: #%d - %s", prResult.PRNumber, prResult.Message)
+			o.logPRMetadata(prResult.Metadata)
 			return prResult.PRNumber, nil
 
 		case "skipped":
@@ -1421,4 +1453,23 @@ func (o *Orchestrator) getCIChecker(workingDir string) CIChecker {
 		return o.ciCheckerFactory(workingDir, o.config.CICheckInterval, o.config.GHCommandTimeout)
 	}
 	return NewCIChecker(workingDir, o.config.CICheckInterval, o.config.GHCommandTimeout)
+}
+
+// logPRMetadata logs applied PR metadata to the console if present
+func (o *Orchestrator) logPRMetadata(metadata *PRMetadata) {
+	if metadata == nil {
+		return
+	}
+
+	if len(metadata.Issues) > 0 {
+		fmt.Printf("  %s Applied issue references: %s\n", Green("✓"), strings.Join(metadata.Issues, ", "))
+	}
+
+	if len(metadata.Labels) > 0 {
+		fmt.Printf("  %s Applied labels: %s\n", Green("✓"), strings.Join(metadata.Labels, ", "))
+	}
+
+	if len(metadata.Projects) > 0 {
+		fmt.Printf("  %s Applied to projects: %s\n", Green("✓"), strings.Join(metadata.Projects, ", "))
+	}
 }

@@ -6,6 +6,38 @@ You need to create a Pull Request for the current branch. Follow this decision t
 - Base Branch: {{.BaseBranch}}
 - Description: {{.Description}}
 
+## Metadata Extraction
+Before proceeding, analyze the workflow description for GitHub metadata hints. This is OPTIONAL - only extract metadata if clearly indicated:
+
+### Issue References
+Look for patterns like:
+- "fixes #123", "fix #123"
+- "closes #456", "close #456"
+- "resolves #789", "resolve #789"
+- "related to #101", "relates to #101"
+- "addresses #202"
+
+Extract issue numbers and remember them for the PR body.
+
+### Label Hints
+Look for patterns like:
+- "add bug label", "label: bug"
+- "with labels: bug, urgent"
+- "label as enhancement"
+- "mark as documentation"
+
+Extract label names (lowercase, hyphen-separated).
+
+### Project Hints
+Look for patterns like:
+- "project: Q1 Planning"
+- "add to Roadmap project"
+- "include in project Sprint 5"
+
+Extract project names.
+
+**Important**: Be conservative - only extract metadata that is explicitly mentioned. If uncertain, do not extract.
+
 ## Decision Tree
 
 ### Step 1: Check for commits
@@ -41,9 +73,26 @@ If push fails due to pre-commit hooks:
 - If fixes fail after 3 attempts, output "failed" status
 
 ### Step 4: Create the PR
-Create the PR using gh CLI:
+Create the PR using gh CLI. If metadata was extracted, apply it using the appropriate flags:
+
+Basic PR creation:
 ```bash
 gh pr create --title "<title based on branch/description>" --body "<description>"
+```
+
+With labels (if extracted):
+```bash
+gh pr create --title "<title>" --body "<description>" --label bug --label urgent
+```
+
+With project (if extracted):
+```bash
+gh pr create --title "<title>" --body "<description>" --project "Roadmap"
+```
+
+Combined example with all metadata:
+```bash
+gh pr create --title "<title>" --body "<description>" --label bug --project "Q1 Planning"
 ```
 
 PR title guidelines:
@@ -54,6 +103,20 @@ PR title guidelines:
 PR body should include:
 - Brief summary of changes
 - Reference to the workflow type and description
+- Issue keywords at the end (if extracted): "Fixes #123", "Closes #456", "Related to #789"
+  - Use "Fixes" or "Closes" for issues that will be closed by this PR
+  - Use "Related to" for issues that are related but won't be closed
+  - Place these on separate lines at the end of the body
+
+Example PR body with issue references:
+```
+Brief summary of the changes made in this PR.
+
+Additional context about the implementation.
+
+Fixes #123
+Related to #456
+```
 
 ### Step 5: Verify PR creation
 After creating, verify the PR exists and get its number:
@@ -67,7 +130,40 @@ Output your result as JSON:
 {
   "prNumber": <number or 0 if not created>,
   "status": "<created|exists|skipped|failed>",
-  "message": "<explanation of what happened>"
+  "message": "<explanation of what happened>",
+  "metadata": {
+    "issues": ["#123", "#456"],
+    "labels": ["bug", "enhancement"],
+    "projects": ["Roadmap"]
+  }
+}
+```
+
+The `metadata` field is OPTIONAL and should only be included if you extracted and applied metadata:
+- `issues`: Array of issue references (with # prefix) that were included in the PR body
+- `labels`: Array of label names that were applied to the PR
+- `projects`: Array of project names that the PR was added to
+
+If no metadata was extracted or applied, omit the `metadata` field entirely.
+
+Example without metadata:
+```json
+{
+  "prNumber": 123,
+  "status": "created",
+  "message": "PR created successfully"
+}
+```
+
+Example with partial metadata (only labels):
+```json
+{
+  "prNumber": 123,
+  "status": "created",
+  "message": "PR created successfully",
+  "metadata": {
+    "labels": ["bug"]
+  }
 }
 ```
 
