@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -86,6 +87,40 @@ func (c *FakeClock) NewTicker(d time.Duration) Ticker {
 	c.tickers = append(c.tickers, ticker)
 
 	return ticker
+}
+
+// ActiveTimerCount returns the number of active/pending timers
+func (c *FakeClock) ActiveTimerCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	count := 0
+	for _, timer := range c.timers {
+		timer.mu.Lock()
+		if !timer.stopped {
+			count++
+		}
+		timer.mu.Unlock()
+	}
+	return count
+}
+
+// WaitForTimers waits until at least n timers are registered, with a real timeout to prevent test hangs.
+// Returns nil when ActiveTimerCount() >= n, or an error if timeout is exceeded.
+func (c *FakeClock) WaitForTimers(n int, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+
+	for {
+		if c.ActiveTimerCount() >= n {
+			return nil
+		}
+
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timeout waiting for %d timers, got %d after %v", n, c.ActiveTimerCount(), timeout)
+		}
+
+		time.Sleep(1 * time.Millisecond)
+	}
 }
 
 // Advance moves the fake clock forward by the specified duration
@@ -583,4 +618,169 @@ func TestTimer_StopReturnsFalseWhenAlreadyStopped(t *testing.T) {
 
 	wasActive = timer.Stop()
 	assert.False(t, wasActive, "second Stop should return false")
+}
+
+func TestFakeClock_ActiveTimerCount(t *testing.T) {
+	tests := []struct {
+		name      string
+		setup     func(*FakeClock) int
+		wantCount int
+	}{
+		{
+			name: "no timers registered",
+			setup: func(c *FakeClock) int {
+				return 0
+			},
+			wantCount: 0,
+		},
+		{
+			name: "single timer registered",
+			setup: func(c *FakeClock) int {
+				c.NewTimer(5 * time.Second)
+				return 0
+			},
+			wantCount: 1,
+		},
+		{
+			name: "multiple timers registered",
+			setup: func(c *FakeClock) int {
+				c.NewTimer(5 * time.Second)
+				c.NewTimer(10 * time.Second)
+				c.NewTimer(15 * time.Second)
+				return 0
+			},
+			wantCount: 3,
+		},
+		{
+			name: "timers decrease when fired",
+			setup: func(c *FakeClock) int {
+				c.NewTimer(5 * time.Second)
+				c.NewTimer(10 * time.Second)
+				c.NewTimer(15 * time.Second)
+				c.Advance(10 * time.Second)
+				return 0
+			},
+			wantCount: 1,
+		},
+		{
+			name: "stopped timers not counted as active",
+			setup: func(c *FakeClock) int {
+				timer := c.NewTimer(5 * time.Second)
+				timer.Stop()
+				return 0
+			},
+			wantCount: 0,
+		},
+		{
+			name: "After creates timer",
+			setup: func(c *FakeClock) int {
+				c.After(5 * time.Second)
+				return 0
+			},
+			wantCount: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			start := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+			clock := NewFakeClock(start)
+
+			tt.setup(clock)
+			got := clock.ActiveTimerCount()
+			assert.Equal(t, tt.wantCount, got)
+		})
+	}
+}
+
+func TestFakeClock_WaitForTimers(t *testing.T) {
+	tests := []struct {
+		name    string
+		n       int
+		timeout time.Duration
+		setup   func(*FakeClock, *sync.WaitGroup)
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name:    "returns immediately when timers already registered",
+			n:       2,
+			timeout: 100 * time.Millisecond,
+			setup: func(c *FakeClock, wg *sync.WaitGroup) {
+				c.NewTimer(5 * time.Second)
+				c.NewTimer(10 * time.Second)
+			},
+			wantErr: false,
+		},
+		{
+			name:    "waits for goroutines to register timers",
+			n:       3,
+			timeout: 1 * time.Second,
+			setup: func(c *FakeClock, wg *sync.WaitGroup) {
+				for i := 0; i < 3; i++ {
+					wg.Add(1)
+					go func(delay time.Duration) {
+						defer wg.Done()
+						time.Sleep(delay)
+						c.NewTimer(5 * time.Second)
+					}(time.Duration(i*10) * time.Millisecond)
+				}
+			},
+			wantErr: false,
+		},
+		{
+			name:    "returns error when timeout exceeded",
+			n:       5,
+			timeout: 50 * time.Millisecond,
+			setup: func(c *FakeClock, wg *sync.WaitGroup) {
+				c.NewTimer(5 * time.Second)
+			},
+			wantErr: true,
+			errMsg:  "timeout waiting for 5 timers",
+		},
+		{
+			name:    "works with zero timers",
+			n:       0,
+			timeout: 50 * time.Millisecond,
+			setup: func(c *FakeClock, wg *sync.WaitGroup) {
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			start := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+			clock := NewFakeClock(start)
+
+			var wg sync.WaitGroup
+			tt.setup(clock, &wg)
+
+			err := clock.WaitForTimers(tt.n, tt.timeout)
+
+			wg.Wait()
+
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errMsg)
+			} else {
+				require.NoError(t, err)
+				assert.GreaterOrEqual(t, clock.ActiveTimerCount(), tt.n)
+			}
+		})
+	}
+}
+
+func TestFakeClock_WaitForTimers_Timeout(t *testing.T) {
+	start := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	clock := NewFakeClock(start)
+
+	before := time.Now()
+	err := clock.WaitForTimers(10, 100*time.Millisecond)
+	elapsed := time.Since(before)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timeout waiting for 10 timers")
+	assert.GreaterOrEqual(t, elapsed, 100*time.Millisecond)
+	assert.Less(t, elapsed, 200*time.Millisecond)
 }
