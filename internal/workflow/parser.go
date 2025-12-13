@@ -57,6 +57,11 @@ func (p *outputParser) ExtractJSON(output string) (string, error) {
 	// Fall back to looking for markdown code blocks
 	blocks := p.findJSONBlocks(output)
 	if len(blocks) == 0 {
+		// Detect if the response is text-only (Claude ignored schema constraints)
+		if p.isTextOnlyResponse(trimmed) {
+			preview := truncateOutput(output, 500)
+			return "", fmt.Errorf("text-only response detected: Claude ignored schema constraint and returned text/markdown instead of required JSON format.\n\nClaude output preview:\n%s\n\n%w", preview, ErrParseJSON)
+		}
 		preview := truncateOutput(output, 500)
 		return "", fmt.Errorf("no JSON blocks found in output.\n\nClaude output preview:\n%s\n\n%w", preview, ErrParseJSON)
 	}
@@ -177,4 +182,23 @@ func (p *outputParser) unmarshalJSON(jsonStr string, target interface{}) error {
 		return fmt.Errorf("invalid JSON %w: %w", ErrParseJSON, err)
 	}
 	return nil
+}
+
+// isTextOnlyResponse detects if the response contains only text/markdown without JSON
+func (p *outputParser) isTextOnlyResponse(output string) bool {
+	// Check if the output contains common indicators of text-only responses
+	// Look for markdown headers, paragraphs, or sentences without any JSON-like structures
+
+	// If output contains { or [, it might contain JSON-like structures
+	if strings.Contains(output, "{") || strings.Contains(output, "[") {
+		return false
+	}
+
+	// Check for common text-only indicators
+	hasMarkdownHeaders := strings.Contains(output, "#")
+	hasSentences := strings.Contains(output, ".") && len(output) > 50
+	hasMultipleLines := strings.Count(output, "\n") > 2
+
+	// If it has text-like characteristics and no JSON structures, it's likely text-only
+	return (hasMarkdownHeaders || hasSentences) && hasMultipleLines
 }

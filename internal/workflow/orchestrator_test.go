@@ -1393,7 +1393,7 @@ func TestOrchestrator_executePhase(t *testing.T) {
 					{Hash: "abc123", Subject: "feat: add feature"},
 				}, nil)
 				pg.On("GeneratePRSplitPrompt", mock.Anything, mock.Anything).Return("pr split prompt", nil)
-				exec.On("ExecuteStreaming", mock.Anything, mock.Anything, mock.Anything).Return(&ExecuteResult{
+				exec.On("Execute", mock.Anything, mock.Anything).Return(&ExecuteResult{
 					Output:   "```json\n{\"strategy\":\"commits\",\"parentTitle\":\"Parent\",\"parentDescription\":\"Desc\",\"summary\":\"Split\",\"childPRs\":[]}\n```",
 					ExitCode: 0,
 				}, nil)
@@ -2818,7 +2818,7 @@ func TestOrchestrator_executePRSplit(t *testing.T) {
 					{Hash: "abc123", Subject: "feat: add feature"},
 				}, nil)
 				pg.On("GeneratePRSplitPrompt", mock.Anything, mock.Anything).Return("pr-split prompt", nil)
-				exec.On("ExecuteStreaming", mock.Anything, mock.Anything, mock.Anything).Return(&ExecuteResult{
+				exec.On("Execute", mock.Anything, mock.Anything).Return(&ExecuteResult{
 					Output:   "```json\n{\"strategy\":\"commits\",\"parentTitle\":\"Parent\",\"parentDescription\":\"Desc\",\"summary\":\"split complete\",\"childPRs\":[]}\n```",
 					ExitCode: 0,
 				}, nil)
@@ -2928,9 +2928,9 @@ func TestOrchestrator_executePRSplit_CIFailureRetry(t *testing.T) {
 	mockPG.On("GeneratePRSplitPrompt", mock.Anything, mock.Anything).Return("pr-split prompt", nil).Once()
 
 	// First execution returns plan
-	mockExec.On("ExecuteStreaming", mock.Anything, mock.MatchedBy(func(config ExecuteConfig) bool {
+	mockExec.On("Execute", mock.Anything, mock.MatchedBy(func(config ExecuteConfig) bool {
 		return config.Prompt == "pr-split prompt"
-	}), mock.Anything).Return(&ExecuteResult{
+	})).Return(&ExecuteResult{
 		Output:   `{"strategy":"commits","parentTitle":"Parent","parentDescription":"Desc","summary":"Split","childPRs":[{"title":"Child PR","description":"Desc"}]}`,
 		ExitCode: 0,
 	}, nil).Once()
@@ -2963,9 +2963,9 @@ func TestOrchestrator_executePRSplit_CIFailureRetry(t *testing.T) {
 	mockPG.On("GenerateFixCIPrompt", mock.Anything).Return("fix ci prompt", nil).Once()
 
 	// Second execution with fix prompt
-	mockExec.On("ExecuteStreaming", mock.Anything, mock.MatchedBy(func(config ExecuteConfig) bool {
+	mockExec.On("Execute", mock.Anything, mock.MatchedBy(func(config ExecuteConfig) bool {
 		return config.Prompt == "fix ci prompt"
-	}), mock.Anything).Return(&ExecuteResult{
+	})).Return(&ExecuteResult{
 		Output:   `{"strategy":"commits","parentTitle":"Parent","parentDescription":"Desc","summary":"Split","childPRs":[{"title":"Child PR","description":"Desc"}]}`,
 		ExitCode: 0,
 	}, nil).Once()
@@ -5076,7 +5076,7 @@ func TestOrchestrator_executePRSplit_PromptTooLong(t *testing.T) {
 				gr.On("GetCurrentBranch", mock.Anything, "/tmp/worktree").Return("test-branch", nil)
 				gr.On("GetCommits", mock.Anything, "/tmp/worktree", "main").Return([]command.Commit{}, nil)
 				pg.On("GeneratePRSplitPrompt", mock.Anything, mock.Anything).Return("pr split prompt", nil)
-				exec.On("ExecuteStreaming", mock.Anything, mock.Anything, mock.Anything).Return(
+				exec.On("Execute", mock.Anything, mock.Anything).Return(
 					(*ExecuteResult)(nil),
 					fmt.Errorf("claude execution failed with exit code 1: %w", ErrPromptTooLong),
 				)
@@ -5092,7 +5092,7 @@ func TestOrchestrator_executePRSplit_PromptTooLong(t *testing.T) {
 				gr.On("GetCurrentBranch", mock.Anything, "/tmp/worktree").Return("test-branch", nil)
 				gr.On("GetCommits", mock.Anything, "/tmp/worktree", "main").Return([]command.Commit{}, nil)
 				pg.On("GeneratePRSplitPrompt", mock.Anything, mock.Anything).Return("pr split prompt", nil)
-				exec.On("ExecuteStreaming", mock.Anything, mock.Anything, mock.Anything).Return(
+				exec.On("Execute", mock.Anything, mock.Anything).Return(
 					(*ExecuteResult)(nil),
 					errors.New("some other error"),
 				)
