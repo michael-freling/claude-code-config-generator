@@ -211,11 +211,8 @@ func (t *fakeTimer) Reset(d time.Duration) bool {
 	defer t.mu.Unlock()
 
 	wasActive := !t.stopped
-
-	t.clock.mu.Lock()
-	t.deadline = t.clock.now.Add(d)
-	t.clock.mu.Unlock()
-
+	now := t.clock.Now()
+	t.deadline = now.Add(d)
 	t.stopped = false
 
 	select {
