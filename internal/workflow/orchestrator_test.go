@@ -4217,6 +4217,7 @@ func TestOrchestrator_ExecutePRCreation(t *testing.T) {
 
 			tt.setupMocks(mockSM, mockExec, mockPG, mockOP)
 
+			cmdRunner := command.NewRunner()
 			o := &Orchestrator{
 				stateManager:    mockSM,
 				executor:        mockExec,
@@ -4224,6 +4225,7 @@ func TestOrchestrator_ExecutePRCreation(t *testing.T) {
 				parser:          mockOP,
 				config:          DefaultConfig("/tmp/base"),
 				logger:          NewLogger(LogLevelNormal),
+				gitRunner:       command.NewGitRunner(cmdRunner),
 			}
 
 			// Create a temporary directory for git command to work
@@ -4503,6 +4505,7 @@ func TestOrchestrator_ExecuteImplementation_NoPRError(t *testing.T) {
 			cmd.Dir = tmpDir
 			require.NoError(t, cmd.Run())
 
+			cmdRunner := command.NewRunner()
 			o := &Orchestrator{
 				stateManager:    mockSM,
 				executor:        mockExec,
@@ -4511,6 +4514,7 @@ func TestOrchestrator_ExecuteImplementation_NoPRError(t *testing.T) {
 				worktreeManager: mockWT,
 				config:          DefaultConfig("/tmp/workflows"),
 				logger:          NewLogger(LogLevelNormal),
+				gitRunner:       command.NewGitRunner(cmdRunner),
 				ciCheckerFactory: func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker {
 					return mockCI
 				},
@@ -4741,6 +4745,7 @@ func TestOrchestrator_ExecuteRefactoring_NoPRError(t *testing.T) {
 			cmd.Dir = tmpDir
 			require.NoError(t, cmd.Run())
 
+			cmdRunner := command.NewRunner()
 			o := &Orchestrator{
 				stateManager:    mockSM,
 				executor:        mockExec,
@@ -4748,6 +4753,7 @@ func TestOrchestrator_ExecuteRefactoring_NoPRError(t *testing.T) {
 				parser:          mockOP,
 				config:          DefaultConfig("/tmp/workflows"),
 				logger:          NewLogger(LogLevelNormal),
+				gitRunner:       command.NewGitRunner(cmdRunner),
 				ciCheckerFactory: func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) CIChecker {
 					return mockCI
 				},
