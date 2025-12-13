@@ -13,33 +13,6 @@ import (
 	"github.com/michael-freling/claude-code-tools/internal/command"
 )
 
-const (
-	maxPRCreationAttempts = 3
-	prCreationRetryDelay  = 5 * time.Second
-)
-
-// PRCreationResult represents the result of a PR creation attempt.
-// It contains the PR number (if created or found), the status of the operation,
-// and a message explaining the result. The status can be "created" (new PR),
-// "exists" (PR already exists), "skipped" (no commits to create PR for), or
-// "failed" (PR creation failed).
-type PRCreationResult struct {
-	PRNumber int    `json:"prNumber"`
-	Status   string `json:"status"` // "created", "exists", "skipped", "failed"
-	Message  string `json:"message"`
-}
-
-// PRCreationResultSchema is the JSON schema for Claude's PR creation output
-var PRCreationResultSchema = `{
-    "type": "object",
-    "properties": {
-        "prNumber": {"type": "integer", "description": "The PR number if created or found"},
-        "status": {"type": "string", "enum": ["created", "exists", "skipped", "failed"], "description": "The result status"},
-        "message": {"type": "string", "description": "A message explaining the result"}
-    },
-    "required": ["status", "message"]
-}`
-
 // Config holds configuration for the orchestrator
 type Config struct {
 	BaseDir                    string
@@ -1011,6 +984,7 @@ func (o *Orchestrator) executePRCreation(ctx context.Context, state *WorkflowSta
 		return 0, fmt.Errorf("failed to generate PR creation prompt: %w", err)
 	}
 
+	var lastError string
 	for attempt := 1; attempt <= maxPRCreationAttempts; attempt++ {
 		if attempt > 1 {
 			fmt.Printf("%s Retry %d/%d for PR creation\n", Yellow("⚠"), attempt, maxPRCreationAttempts)
@@ -1022,7 +996,7 @@ func (o *Orchestrator) executePRCreation(ctx context.Context, state *WorkflowSta
 
 		result, err := o.executor.ExecuteStreaming(ctx, ExecuteConfig{
 			Prompt:                     prompt,
-			Timeout:                    10 * time.Minute, // PR creation should be quick
+			Timeout:                    prCreationTimeout,
 			JSONSchema:                 PRCreationResultSchema,
 			DangerouslySkipPermissions: o.config.DangerouslySkipPermissions,
 			WorkingDirectory:           workingDir,
@@ -1031,6 +1005,7 @@ func (o *Orchestrator) executePRCreation(ctx context.Context, state *WorkflowSta
 		if err != nil {
 			spinner.Fail("PR creation failed")
 			o.logger.Verbose("PR creation attempt %d failed: %v", attempt, err)
+			lastError = err.Error()
 			continue
 		}
 
@@ -1039,6 +1014,7 @@ func (o *Orchestrator) executePRCreation(ctx context.Context, state *WorkflowSta
 		if err != nil {
 			spinner.Fail("Failed to parse PR creation output")
 			o.logger.Verbose("Failed to extract JSON from PR creation output: %v", err)
+			lastError = fmt.Sprintf("failed to extract JSON: %v", err)
 			continue
 		}
 
@@ -1046,39 +1022,37 @@ func (o *Orchestrator) executePRCreation(ctx context.Context, state *WorkflowSta
 		if err := json.Unmarshal([]byte(jsonStr), &prResult); err != nil {
 			spinner.Fail("Failed to parse PR creation result")
 			o.logger.Verbose("Failed to unmarshal PR creation result: %v", err)
+			lastError = fmt.Sprintf("failed to unmarshal PR creation result: %v", err)
 			continue
 		}
 
-		switch prResult.Status {
-		case "created":
-			spinner.Success(fmt.Sprintf("PR #%d created", prResult.PRNumber))
-			o.logger.Verbose("PR creation successful: #%d - %s", prResult.PRNumber, prResult.Message)
+		// Handle successful cases with early returns
+		if prResult.Status == "created" || prResult.Status == "exists" {
+			statusMsg := "created"
+			if prResult.Status == "exists" {
+				statusMsg = "already exists"
+			}
+			spinner.Success(fmt.Sprintf("PR #%d %s", prResult.PRNumber, statusMsg))
+			o.logger.Verbose("PR %s: #%d - %s", prResult.Status, prResult.PRNumber, prResult.Message)
+			logPRMetadata(prResult.Metadata)
 			return prResult.PRNumber, nil
+		}
 
-		case "exists":
-			spinner.Success(fmt.Sprintf("PR #%d already exists", prResult.PRNumber))
-			o.logger.Verbose("PR already exists: #%d - %s", prResult.PRNumber, prResult.Message)
-			return prResult.PRNumber, nil
-
-		case "skipped":
+		// Handle skipped case with early return
+		if prResult.Status == "skipped" {
 			spinner.Success("PR creation skipped")
 			o.logger.Verbose("PR creation skipped: %s", prResult.Message)
 			fmt.Printf("%s %s\n", Yellow("⚠"), prResult.Message)
 			return 0, nil
-
-		case "failed":
-			spinner.Fail("PR creation failed")
-			o.logger.Verbose("PR creation failed: %s", prResult.Message)
-			// Continue to retry
-
-		default:
-			spinner.Fail("Unknown PR creation status")
-			o.logger.Verbose("Unknown PR creation status: %s", prResult.Status)
-			// Continue to retry
 		}
+
+		// Failed or unknown status - log and continue to retry
+		spinner.Fail("PR creation failed")
+		o.logger.Verbose("PR creation failed with status %q: %s", prResult.Status, prResult.Message)
+		lastError = prResult.Message
 	}
 
-	return 0, fmt.Errorf("failed to create PR after %d attempts", maxPRCreationAttempts)
+	return 0, fmt.Errorf("failed to create PR after %d attempts: %s", maxPRCreationAttempts, lastError)
 }
 
 // handleNoPRError handles the case when no PR exists during CI check.
