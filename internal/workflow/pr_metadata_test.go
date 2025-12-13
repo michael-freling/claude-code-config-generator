@@ -13,6 +13,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// captureStdout captures stdout output from a function for testing purposes.
+// It returns the captured output as a string.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stdout = w
+
+	fn()
+
+	w.Close()
+	os.Stdout = old
+
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("failed to read captured output: %v", err)
+	}
+
+	return buf.String()
+}
+
 func TestPRCreationResult_JSONParsing(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -394,28 +419,9 @@ func TestLogPRMetadata(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Capture stdout
-			old := os.Stdout
-			r, w, _ := os.Pipe()
-			os.Stdout = w
-
-			// Create orchestrator with minimal config for testing
-			config := DefaultConfig(t.TempDir())
-			config.LogLevel = LogLevelNormal
-			o, err := NewOrchestratorWithConfig(config)
-			require.NoError(t, err)
-
-			// Execute the function
-			o.logPRMetadata(tt.metadata)
-
-			// Restore stdout
-			w.Close()
-			os.Stdout = old
-
-			// Read captured output
-			var buf bytes.Buffer
-			io.Copy(&buf, r)
-			output := buf.String()
+			output := captureStdout(t, func() {
+				logPRMetadata(tt.metadata)
+			})
 
 			if tt.wantEmpty {
 				assert.Empty(t, output, "expected no output for nil or empty metadata")
@@ -489,28 +495,9 @@ func TestLogPRMetadata_OutputFormat(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Capture stdout
-			old := os.Stdout
-			r, w, _ := os.Pipe()
-			os.Stdout = w
-
-			// Create orchestrator
-			config := DefaultConfig(t.TempDir())
-			config.LogLevel = LogLevelNormal
-			o, err := NewOrchestratorWithConfig(config)
-			require.NoError(t, err)
-
-			// Execute the function
-			o.logPRMetadata(tt.metadata)
-
-			// Restore stdout
-			w.Close()
-			os.Stdout = old
-
-			// Read captured output
-			var buf bytes.Buffer
-			io.Copy(&buf, r)
-			output := buf.String()
+			output := captureStdout(t, func() {
+				logPRMetadata(tt.metadata)
+			})
 
 			// Run custom format check
 			tt.checkFormat(t, output)
