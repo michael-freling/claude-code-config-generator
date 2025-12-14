@@ -156,8 +156,7 @@ func (c *CIFailureClassifier) parseJobDetails(output string) []CIJobDetail {
 
 	var checks []struct {
 		Name        string `json:"name"`
-		Conclusion  string `json:"conclusion"`
-		Status      string `json:"status"`
+		State       string `json:"state"` // gh pr checks uses "state" not "conclusion"
 		StartedAt   string `json:"startedAt"`
 		CompletedAt string `json:"completedAt"`
 	}
@@ -170,8 +169,8 @@ func (c *CIFailureClassifier) parseJobDetails(output string) []CIJobDetail {
 	for _, check := range checks {
 		detail := CIJobDetail{
 			Name:        check.Name,
-			Conclusion:  check.Conclusion,
-			Status:      check.Status,
+			Conclusion:  check.State,                        // Map state to conclusion for internal use
+			Status:      deriveStatusFromState(check.State), // Derive status from state
 			StartedAt:   parseTime(check.StartedAt),
 			CompletedAt: parseTime(check.CompletedAt),
 		}
@@ -197,6 +196,22 @@ func parseTime(timeStr string) *time.Time {
 	}
 
 	return &t
+}
+
+// deriveStatusFromState maps gh pr checks state values to status categories.
+// State values: SUCCESS, FAILURE, PENDING, QUEUED, IN_PROGRESS, SKIPPED, NEUTRAL, CANCELLED
+// Status values: completed, in_progress, queued
+func deriveStatusFromState(state string) string {
+	switch strings.ToUpper(state) {
+	case "SUCCESS", "FAILURE", "SKIPPED", "NEUTRAL", "CANCELLED":
+		return "completed"
+	case "IN_PROGRESS":
+		return "in_progress"
+	case "PENDING", "QUEUED":
+		return "queued"
+	default:
+		return "queued" // Default to queued for unknown states
+	}
 }
 
 func (c *CIFailureClassifier) findJobDetail(details []CIJobDetail, jobName string) *CIJobDetail {

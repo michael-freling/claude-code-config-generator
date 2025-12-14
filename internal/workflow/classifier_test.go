@@ -34,7 +34,7 @@ func TestCIFailureClassifier_ClassifyResult(t *testing.T) {
 				Passed:        false,
 				Status:        "failure",
 				CancelledJobs: []string{"lint"},
-				Output:        `[{"name":"lint","conclusion":"CANCELLED","status":"completed","startedAt":"2024-01-01T10:00:00Z","completedAt":"2024-01-01T10:00:10Z"}]`,
+				Output:        `[{"name":"lint","state":"CANCELLED","startedAt":"2024-01-01T10:00:00Z","completedAt":"2024-01-01T10:00:10Z"}]`,
 			},
 			history:        nil,
 			wantCategory:   CategoryInfrastructure,
@@ -46,7 +46,7 @@ func TestCIFailureClassifier_ClassifyResult(t *testing.T) {
 				Passed:        false,
 				Status:        "failure",
 				CancelledJobs: []string{"test"},
-				Output:        `[{"name":"test","conclusion":"CANCELLED","status":"completed","startedAt":"2024-01-01T10:00:00Z","completedAt":"2024-01-01T10:10:00Z"}]`,
+				Output:        `[{"name":"test","state":"CANCELLED","startedAt":"2024-01-01T10:00:00Z","completedAt":"2024-01-01T10:10:00Z"}]`,
 			},
 			history:        nil,
 			wantCategory:   CategoryCodeRelated,
@@ -59,7 +59,7 @@ func TestCIFailureClassifier_ClassifyResult(t *testing.T) {
 				Status:        "failure",
 				FailedJobs:    []string{"build"},
 				CancelledJobs: []string{"lint"},
-				Output:        `[{"name":"lint","conclusion":"CANCELLED","status":"completed","startedAt":"2024-01-01T10:00:00Z","completedAt":"2024-01-01T10:00:10Z"}]`,
+				Output:        `[{"name":"lint","state":"CANCELLED","startedAt":"2024-01-01T10:00:00Z","completedAt":"2024-01-01T10:00:10Z"}]`,
 			},
 			history:        nil,
 			wantCategory:   CategoryMixed,
@@ -101,7 +101,7 @@ func TestCIFailureClassifier_ClassifyResult(t *testing.T) {
 				Passed:        false,
 				Status:        "failure",
 				CancelledJobs: []string{"lint", "test"},
-				Output:        `[{"name":"lint","conclusion":"CANCELLED","status":"completed","startedAt":"2024-01-01T10:00:00Z","completedAt":"2024-01-01T10:00:10Z"},{"name":"test","conclusion":"CANCELLED","status":"completed","startedAt":"2024-01-01T10:00:00Z","completedAt":"2024-01-01T10:10:00Z"}]`,
+				Output:        `[{"name":"lint","state":"CANCELLED","startedAt":"2024-01-01T10:00:00Z","completedAt":"2024-01-01T10:00:10Z"},{"name":"test","state":"CANCELLED","startedAt":"2024-01-01T10:00:00Z","completedAt":"2024-01-01T10:10:00Z"}]`,
 			},
 			history:        nil,
 			wantCategory:   CategoryMixed,
@@ -113,7 +113,7 @@ func TestCIFailureClassifier_ClassifyResult(t *testing.T) {
 				Passed:        false,
 				Status:        "failure",
 				CancelledJobs: []string{"deploy", "notify"},
-				Output:        `[{"name":"deploy","conclusion":"CANCELLED","status":"completed","startedAt":"2024-01-01T10:00:00Z","completedAt":"2024-01-01T10:00:05Z"},{"name":"notify","conclusion":"CANCELLED","status":"completed","startedAt":"2024-01-01T10:00:00Z","completedAt":"2024-01-01T10:00:08Z"}]`,
+				Output:        `[{"name":"deploy","state":"CANCELLED","startedAt":"2024-01-01T10:00:00Z","completedAt":"2024-01-01T10:00:05Z"},{"name":"notify","state":"CANCELLED","startedAt":"2024-01-01T10:00:00Z","completedAt":"2024-01-01T10:00:08Z"}]`,
 			},
 			history:        nil,
 			wantCategory:   CategoryInfrastructure,
@@ -469,7 +469,7 @@ func TestCIFailureClassifier_parseJobDetails(t *testing.T) {
 	}{
 		{
 			name:    "valid JSON with all fields",
-			output:  `[{"name":"test","conclusion":"FAILURE","status":"completed","startedAt":"2024-01-01T10:00:00Z","completedAt":"2024-01-01T10:05:00Z"}]`,
+			output:  `[{"name":"test","state":"FAILURE","startedAt":"2024-01-01T10:00:00Z","completedAt":"2024-01-01T10:05:00Z"}]`,
 			wantLen: 1,
 			wantFirst: &CIJobDetail{
 				Name:       "test",
@@ -480,7 +480,7 @@ func TestCIFailureClassifier_parseJobDetails(t *testing.T) {
 		},
 		{
 			name:    "valid JSON with missing optional fields",
-			output:  `[{"name":"lint","conclusion":"SUCCESS","status":"completed"}]`,
+			output:  `[{"name":"lint","state":"SUCCESS"}]`,
 			wantLen: 1,
 			wantFirst: &CIJobDetail{
 				Name:       "lint",
@@ -508,7 +508,7 @@ func TestCIFailureClassifier_parseJobDetails(t *testing.T) {
 		},
 		{
 			name:    "multiple jobs",
-			output:  `[{"name":"build","conclusion":"SUCCESS","status":"completed","startedAt":"2024-01-01T10:00:00Z","completedAt":"2024-01-01T10:02:00Z"},{"name":"test","conclusion":"FAILURE","status":"completed","startedAt":"2024-01-01T10:02:00Z","completedAt":"2024-01-01T10:07:00Z"}]`,
+			output:  `[{"name":"build","state":"SUCCESS","startedAt":"2024-01-01T10:00:00Z","completedAt":"2024-01-01T10:02:00Z"},{"name":"test","state":"FAILURE","startedAt":"2024-01-01T10:02:00Z","completedAt":"2024-01-01T10:07:00Z"}]`,
 			wantLen: 2,
 			wantFirst: &CIJobDetail{
 				Name:       "build",
@@ -519,7 +519,7 @@ func TestCIFailureClassifier_parseJobDetails(t *testing.T) {
 		},
 		{
 			name:    "cancelled job",
-			output:  `[{"name":"deploy","conclusion":"CANCELLED","status":"completed","startedAt":"2024-01-01T10:00:00Z","completedAt":"2024-01-01T10:00:10Z"}]`,
+			output:  `[{"name":"deploy","state":"CANCELLED","startedAt":"2024-01-01T10:00:00Z","completedAt":"2024-01-01T10:00:10Z"}]`,
 			wantLen: 1,
 			wantFirst: &CIJobDetail{
 				Name:       "deploy",
@@ -530,7 +530,7 @@ func TestCIFailureClassifier_parseJobDetails(t *testing.T) {
 		},
 		{
 			name:    "job with only startedAt",
-			output:  `[{"name":"test","conclusion":"IN_PROGRESS","status":"in_progress","startedAt":"2024-01-01T10:00:00Z"}]`,
+			output:  `[{"name":"test","state":"IN_PROGRESS","startedAt":"2024-01-01T10:00:00Z"}]`,
 			wantLen: 1,
 			wantFirst: &CIJobDetail{
 				Name:       "test",
@@ -541,7 +541,7 @@ func TestCIFailureClassifier_parseJobDetails(t *testing.T) {
 		},
 		{
 			name:    "job with invalid timestamp format",
-			output:  `[{"name":"test","conclusion":"SUCCESS","status":"completed","startedAt":"invalid","completedAt":"2024-01-01T10:00:00Z"}]`,
+			output:  `[{"name":"test","state":"SUCCESS","startedAt":"invalid","completedAt":"2024-01-01T10:00:00Z"}]`,
 			wantLen: 1,
 			wantFirst: &CIJobDetail{
 				Name:       "test",
@@ -760,7 +760,7 @@ func TestClassifiedCIResult_Integration(t *testing.T) {
 		Status:        "failure",
 		FailedJobs:    []string{"build"},
 		CancelledJobs: []string{"test", "lint"},
-		Output:        `[{"name":"build","conclusion":"FAILURE","status":"completed","startedAt":"2024-01-01T10:00:00Z","completedAt":"2024-01-01T10:05:00Z"},{"name":"test","conclusion":"CANCELLED","status":"completed","startedAt":"2024-01-01T10:00:00Z","completedAt":"2024-01-01T10:10:00Z"},{"name":"lint","conclusion":"CANCELLED","status":"completed","startedAt":"2024-01-01T10:00:00Z","completedAt":"2024-01-01T10:00:10Z"}]`,
+		Output:        `[{"name":"build","state":"FAILURE","startedAt":"2024-01-01T10:00:00Z","completedAt":"2024-01-01T10:05:00Z"},{"name":"test","state":"CANCELLED","startedAt":"2024-01-01T10:00:00Z","completedAt":"2024-01-01T10:10:00Z"},{"name":"lint","state":"CANCELLED","startedAt":"2024-01-01T10:00:00Z","completedAt":"2024-01-01T10:00:10Z"}]`,
 	}
 
 	result := c.ClassifyResult(ciResult, nil)

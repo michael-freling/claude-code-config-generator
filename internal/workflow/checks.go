@@ -17,7 +17,6 @@ import (
 type ciCheck struct {
 	Name        string `json:"name"`
 	State       string `json:"state"`
-	Conclusion  string `json:"conclusion"`
 	StartedAt   string `json:"startedAt"`
 	CompletedAt string `json:"completedAt"`
 }
@@ -235,7 +234,7 @@ func (c *ciChecker) checkCIOnce(ctx context.Context, prNumber int) (*CIResult, e
 	cmdCtx, cancel := context.WithTimeout(ctx, c.commandTimeout)
 	defer cancel()
 
-	output, err := c.ghRunner.PRChecks(cmdCtx, c.workingDir, prNumber, "name,state,conclusion,startedAt,completedAt")
+	output, err := c.ghRunner.PRChecks(cmdCtx, c.workingDir, prNumber, "name,state,startedAt,completedAt")
 	result.Output = output
 
 	if err != nil {
