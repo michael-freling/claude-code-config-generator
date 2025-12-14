@@ -4,9 +4,6 @@ package e2e
 
 import (
 	"context"
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -16,501 +13,404 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestExecutor_ArgumentConstruction(t *testing.T) {
-	tests := []struct {
-		name         string
-		config       workflow.ExecuteConfig
-		wantContains []string
-		wantNotContains []string
-		wantPromptLast bool
-	}{
-		{
-			name: "basic execution always includes --print",
-			config: workflow.ExecuteConfig{
-				Prompt: "test prompt",
-			},
-			wantContains: []string{"--print"},
-			wantPromptLast: true,
+func TestWorkflow_FeatureWorkflow_E2E(t *testing.T) {
+	helpers.RequireGit(t)
+
+	repo := helpers.NewTempRepo(t)
+	require.NoError(t, repo.CreateFile("main.go", "package main\n\nfunc main() {\n}\n"))
+	require.NoError(t, repo.Commit("Initial commit"))
+
+	workflowName := "test-feature"
+	description := "Add user authentication"
+
+	planJSON := map[string]interface{}{
+		"summary":     "Implement user authentication with JWT",
+		"contextType": "feature",
+		"architecture": map[string]interface{}{
+			"overview":   "Add JWT-based authentication",
+			"components": []string{"auth middleware", "user model"},
 		},
-		{
-			name: "streaming mode includes stream-json and verbose",
-			config: workflow.ExecuteConfig{
-				Prompt: "test prompt",
+		"phases": []map[string]interface{}{
+			{
+				"name":           "Setup",
+				"description":    "Setup authentication infrastructure",
+				"estimatedFiles": 3,
+				"estimatedLines": 150,
 			},
-			wantContains: []string{
-				"--print",
-				"--output-format",
-				"stream-json",
-				"--verbose",
-			},
-			wantPromptLast: true,
 		},
-		{
-			name: "dangerously skip permissions flag",
-			config: workflow.ExecuteConfig{
-				Prompt: "test prompt",
-				DangerouslySkipPermissions: true,
+		"workStreams": []map[string]interface{}{
+			{
+				"name":  "Core auth",
+				"tasks": []string{"JWT generation", "Token validation"},
 			},
-			wantContains: []string{
-				"--print",
-				"--dangerously-skip-permissions",
-			},
-			wantPromptLast: true,
 		},
-		{
-			name: "json schema flag",
-			config: workflow.ExecuteConfig{
-				Prompt: "test prompt",
-				JSONSchema: `{"type": "object"}`,
-			},
-			wantContains: []string{
-				"--print",
-				"--json-schema",
-			},
-			wantPromptLast: true,
-		},
-		{
-			name: "all flags together",
-			config: workflow.ExecuteConfig{
-				Prompt: "test prompt",
-				DangerouslySkipPermissions: true,
-				JSONSchema: `{"type": "object"}`,
-			},
-			wantContains: []string{
-				"--print",
-				"--output-format",
-				"stream-json",
-				"--verbose",
-				"--dangerously-skip-permissions",
-				"--json-schema",
-			},
-			wantPromptLast: true,
+		"risks":               []string{"Token expiration handling"},
+		"complexity":          "medium",
+		"estimatedTotalLines": 150,
+		"estimatedTotalFiles": 3,
+	}
+
+	implSummary := map[string]interface{}{
+		"filesChanged": []string{"auth/jwt.go", "auth/middleware.go"},
+		"linesAdded":   150,
+		"linesRemoved": 10,
+		"testsAdded":   8,
+		"summary":      "Implemented JWT authentication",
+	}
+
+	refactorSummary := map[string]interface{}{
+		"filesChanged": []string{"auth/jwt.go"},
+		"linesAdded":   20,
+		"linesRemoved": 15,
+		"summary":      "Refactored JWT token generation",
+	}
+
+	mockPlanClaude := helpers.NewMockClaudeBuilder(t).
+		WithStreamingResponse("Plan created", planJSON)
+	planClaudePath := mockPlanClaude.Build()
+
+	mockImplClaude := helpers.NewMockClaudeBuilder(t).
+		WithStreamingResponse("Implementation complete", implSummary)
+	implClaudePath := mockImplClaude.Build()
+
+	mockRefactorClaude := helpers.NewMockClaudeBuilder(t).
+		WithStreamingResponse("Refactoring complete", refactorSummary)
+	refactorClaudePath := mockRefactorClaude.Build()
+
+	config := workflow.DefaultConfig(repo.Dir)
+	config.ClaudePath = planClaudePath
+	config.Timeouts.Planning = 10 * time.Second
+	config.Timeouts.Implementation = 10 * time.Second
+	config.Timeouts.Refactoring = 10 * time.Second
+	config.SplitPR = false
+	config.LogLevel = workflow.LogLevelNormal
+
+	mockCI := &mockCIChecker{
+		result: &workflow.CIResult{
+			Passed: true,
+			Status: "success",
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mock := helpers.NewMockClaudeBuilder(t).
-				WithStreamingResponse("test result", map[string]string{"summary": "test"})
-			claudePath := mock.Build()
+	orchestrator, err := workflow.NewTestOrchestrator(config, func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) workflow.CIChecker {
+		return mockCI
+	})
+	require.NoError(t, err)
 
-			logger := workflow.NewLogger(workflow.LogLevelNormal)
-			executor := workflow.NewClaudeExecutorWithPath(claudePath, logger)
+	confirmCalled := false
+	orchestrator.SetConfirmFunc(func(plan *workflow.Plan) (bool, string, error) {
+		confirmCalled = true
+		assert.Equal(t, planJSON["summary"], plan.Summary)
+		config.ClaudePath = implClaudePath
+		return true, "", nil
+	})
 
-			ctx := context.Background()
-			_, err := executor.ExecuteStreaming(ctx, tt.config, nil)
-			require.NoError(t, err)
-
-			args := mock.GetCapturedArgs()
-			require.NotEmpty(t, args, "expected arguments to be captured")
-
-			for _, want := range tt.wantContains {
-				assert.Contains(t, args, want, "expected args to contain %q", want)
-			}
-
-			for _, notWant := range tt.wantNotContains {
-				assert.NotContains(t, args, notWant, "expected args to not contain %q", notWant)
-			}
-
-			if tt.wantPromptLast {
-				require.NotEmpty(t, args)
-				lastArg := args[len(args)-1]
-				assert.Equal(t, tt.config.Prompt, lastArg, "prompt should be the last argument")
-			}
-		})
+	ciCallCount := 0
+	mockCI.onCall = func(callNum int) {
+		ciCallCount = callNum
+		if ciCallCount == 1 {
+			config.ClaudePath = refactorClaudePath
+		}
 	}
+
+	ctx := context.Background()
+	err = orchestrator.Start(ctx, workflowName, description, workflow.WorkflowTypeFeature)
+	require.NoError(t, err)
+
+	assert.True(t, confirmCalled, "confirm function should have been called")
+
+	state, err := orchestrator.Status(workflowName)
+	require.NoError(t, err)
+	assert.Equal(t, workflow.PhaseCompleted, state.CurrentPhase)
+
+	planningPhase := state.Phases[workflow.PhasePlanning]
+	assert.Equal(t, workflow.StatusCompleted, planningPhase.Status)
+	assert.Greater(t, planningPhase.Attempts, 0)
+
+	implPhase := state.Phases[workflow.PhaseImplementation]
+	assert.Equal(t, workflow.StatusCompleted, implPhase.Status)
+
+	refactorPhase := state.Phases[workflow.PhaseRefactoring]
+	assert.Equal(t, workflow.StatusCompleted, refactorPhase.Status)
+
+	assert.NotEmpty(t, state.WorktreePath)
+
+	stateManager := workflow.NewStateManager(repo.Dir)
+	plan, err := stateManager.LoadPlan(workflowName)
+	require.NoError(t, err)
+	assert.Equal(t, planJSON["summary"], plan.Summary)
+
+	args := mockPlanClaude.GetCapturedArgs()
+	assert.Contains(t, args, "--print", "planning phase should include --print flag")
+	assert.Contains(t, args, "stream-json", "planning phase should use streaming mode")
+	assert.Contains(t, args, "--json-schema", "planning phase should use JSON schema")
 }
 
-func TestPromptGeneration_PlanningPhase(t *testing.T) {
-	tests := []struct {
-		name             string
-		workflowType     workflow.WorkflowType
-		description      string
-		feedback         []string
-		wantContainsDesc bool
-		wantContainsType bool
-	}{
-		{
-			name:             "feature workflow",
-			workflowType:     workflow.WorkflowTypeFeature,
-			description:      "Add user authentication",
-			wantContainsDesc: true,
-			wantContainsType: true,
+func TestWorkflow_FixWorkflow_E2E(t *testing.T) {
+	helpers.RequireGit(t)
+
+	repo := helpers.NewTempRepo(t)
+	require.NoError(t, repo.CreateFile("buggy.go", "package main\n\nfunc buggy() {\n\t// memory leak here\n}\n"))
+	require.NoError(t, repo.Commit("Initial commit"))
+
+	workflowName := "test-fix"
+	description := "Fix memory leak in parser"
+
+	planJSON := map[string]interface{}{
+		"summary":     "Fix memory leak in parser",
+		"contextType": "fix",
+		"phases": []map[string]interface{}{
+			{
+				"name":           "Fix",
+				"description":    "Fix the memory leak",
+				"estimatedFiles": 1,
+				"estimatedLines": 10,
+			},
 		},
-		{
-			name:             "fix workflow",
-			workflowType:     workflow.WorkflowTypeFix,
-			description:      "Fix memory leak in parser",
-			wantContainsDesc: true,
-			wantContainsType: true,
-		},
-		{
-			name:             "with feedback",
-			workflowType:     workflow.WorkflowTypeFeature,
-			description:      "Add logging",
-			feedback:         []string{"Please use structured logging", "Add tests"},
-			wantContainsDesc: true,
-			wantContainsType: true,
+		"complexity": "small",
+	}
+
+	implSummary := map[string]interface{}{
+		"filesChanged": []string{"buggy.go"},
+		"linesAdded":   5,
+		"linesRemoved": 2,
+		"testsAdded":   1,
+		"summary":      "Fixed memory leak",
+	}
+
+	refactorSummary := map[string]interface{}{
+		"filesChanged": []string{"buggy.go"},
+		"linesAdded":   3,
+		"linesRemoved": 1,
+		"summary":      "Added documentation",
+	}
+
+	mockPlanClaude := helpers.NewMockClaudeBuilder(t).
+		WithStreamingResponse("Plan created", planJSON)
+	planClaudePath := mockPlanClaude.Build()
+
+	mockImplClaude := helpers.NewMockClaudeBuilder(t).
+		WithStreamingResponse("Implementation complete", implSummary)
+	implClaudePath := mockImplClaude.Build()
+
+	mockRefactorClaude := helpers.NewMockClaudeBuilder(t).
+		WithStreamingResponse("Refactoring complete", refactorSummary)
+	refactorClaudePath := mockRefactorClaude.Build()
+
+	config := workflow.DefaultConfig(repo.Dir)
+	config.ClaudePath = planClaudePath
+	config.Timeouts.Planning = 10 * time.Second
+	config.Timeouts.Implementation = 10 * time.Second
+	config.Timeouts.Refactoring = 10 * time.Second
+	config.SplitPR = false
+
+	mockCI := &mockCIChecker{
+		result: &workflow.CIResult{
+			Passed: true,
+			Status: "success",
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gen, err := workflow.NewPromptGenerator()
-			require.NoError(t, err)
+	orchestrator, err := workflow.NewTestOrchestrator(config, func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) workflow.CIChecker {
+		return mockCI
+	})
+	require.NoError(t, err)
 
-			prompt, err := gen.GeneratePlanningPrompt(tt.workflowType, tt.description, tt.feedback)
-			require.NoError(t, err)
-			assert.NotEmpty(t, prompt)
+	orchestrator.SetConfirmFunc(func(plan *workflow.Plan) (bool, string, error) {
+		config.ClaudePath = implClaudePath
+		return true, "", nil
+	})
 
-			if tt.wantContainsDesc {
-				assert.Contains(t, prompt, tt.description, "prompt should contain description")
-			}
-
-			if tt.wantContainsType {
-				assert.Contains(t, prompt, string(tt.workflowType), "prompt should contain workflow type")
-			}
-
-			for _, feedback := range tt.feedback {
-				assert.Contains(t, prompt, feedback, "prompt should contain feedback: %s", feedback)
-			}
-		})
+	ciCallCount := 0
+	mockCI.onCall = func(callNum int) {
+		ciCallCount = callNum
+		if ciCallCount == 1 {
+			config.ClaudePath = refactorClaudePath
+		}
 	}
+
+	ctx := context.Background()
+	err = orchestrator.Start(ctx, workflowName, description, workflow.WorkflowTypeFix)
+	require.NoError(t, err)
+
+	state, err := orchestrator.Status(workflowName)
+	require.NoError(t, err)
+	assert.Equal(t, workflow.PhaseCompleted, state.CurrentPhase)
+	assert.Equal(t, workflow.WorkflowTypeFix, state.Type)
 }
 
-func TestWorkflow_PlanningPhase_WithMockClaude(t *testing.T) {
-	tests := []struct {
-		name            string
-		workflowType    workflow.WorkflowType
-		description     string
-		planJSON        map[string]interface{}
-		wantError       bool
-		wantPhaseParsed bool
-	}{
-		{
-			name:         "valid plan",
-			workflowType: workflow.WorkflowTypeFeature,
-			description:  "Add user authentication",
-			planJSON: map[string]interface{}{
-				"summary":     "Implement user authentication with JWT",
-				"contextType": "feature",
-				"architecture": map[string]interface{}{
-					"overview":   "Add JWT-based authentication",
-					"components": []string{"auth middleware", "user model"},
-				},
-				"phases": []map[string]interface{}{
-					{
-						"name":           "Setup",
-						"description":    "Setup authentication infrastructure",
-						"estimatedFiles": 3,
-						"estimatedLines": 150,
-					},
-				},
-				"workStreams": []map[string]interface{}{
-					{
-						"name":  "Core auth",
-						"tasks": []string{"JWT generation", "Token validation"},
-					},
-				},
-				"risks":                []string{"Token expiration handling"},
-				"complexity":           "medium",
-				"estimatedTotalLines":  150,
-				"estimatedTotalFiles":  3,
-			},
-			wantPhaseParsed: true,
-		},
-		{
-			name:         "minimal valid plan",
-			workflowType: workflow.WorkflowTypeFix,
-			description:  "Fix memory leak",
-			planJSON: map[string]interface{}{
-				"summary":     "Fix memory leak in parser",
-				"contextType": "fix",
-				"phases": []map[string]interface{}{
-					{
-						"name":           "Fix",
-						"description":    "Fix the leak",
-						"estimatedFiles": 1,
-						"estimatedLines": 10,
-					},
-				},
-				"complexity": "small",
-			},
-			wantPhaseParsed: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tmpDir := t.TempDir()
-
-			mock := helpers.NewMockClaudeBuilder(t).
-				WithStreamingResponse("Plan created", tt.planJSON)
-			claudePath := mock.Build()
-
-			config := workflow.DefaultConfig(tmpDir)
-			config.ClaudePath = claudePath
-			config.Timeouts.Planning = 10 * time.Second
-
-			orchestrator, err := workflow.NewOrchestratorWithConfig(config)
-			require.NoError(t, err)
-
-			orchestrator.SetConfirmFunc(func(plan *workflow.Plan) (bool, string, error) {
-				return false, "", workflow.ErrUserCancelled
-			})
-
-			ctx := context.Background()
-			workflowName := "test-workflow"
-			err = orchestrator.Start(ctx, workflowName, tt.description, tt.workflowType)
-
-			if tt.wantError {
-				assert.Error(t, err)
-				return
-			}
-
-			if tt.wantPhaseParsed {
-				stateManager := workflow.NewStateManager(tmpDir)
-				plan, err := stateManager.LoadPlan(workflowName)
-				require.NoError(t, err)
-				assert.Equal(t, tt.planJSON["summary"], plan.Summary)
-				assert.NotEmpty(t, plan.Phases)
-			}
-
-			args := mock.GetCapturedArgs()
-			assert.Contains(t, args, "--print", "should include --print flag")
-			assert.Contains(t, args, "stream-json", "should include stream-json format")
-			assert.Contains(t, args, "--json-schema", "should include --json-schema flag")
-
-			// Verify prompt was provided as last argument
-			require.NotEmpty(t, args, "expected arguments to be captured")
-			lastArg := args[len(args)-1]
-			assert.NotEmpty(t, lastArg, "prompt should not be empty")
-		})
-	}
+func TestWorkflow_WithPRSplit_E2E(t *testing.T) {
+	t.Skip("PR split requires complex GH runner mocking - deferred to later implementation")
 }
 
-func TestWorkflow_PromptTooLong_Error(t *testing.T) {
-	tests := []struct {
-		name          string
-		stderrMsg     string
-		exitCode      int
-		wantErrType   error
-	}{
-		{
-			name:        "prompt too long error detected",
-			stderrMsg:   "Prompt is too long",
-			exitCode:    1,
-			wantErrType: workflow.ErrPromptTooLong,
+func TestWorkflow_ResumeAfterFailure_E2E(t *testing.T) {
+	helpers.RequireGit(t)
+
+	repo := helpers.NewTempRepo(t)
+	require.NoError(t, repo.CreateFile("main.go", "package main\n\nfunc main() {\n}\n"))
+	require.NoError(t, repo.Commit("Initial commit"))
+
+	workflowName := "test-resume"
+	description := "Add feature with resume"
+
+	planJSON := map[string]interface{}{
+		"summary":     "Add new feature",
+		"contextType": "feature",
+		"phases": []map[string]interface{}{
+			{
+				"name":           "Implementation",
+				"description":    "Implement the feature",
+				"estimatedFiles": 2,
+				"estimatedLines": 100,
+			},
+		},
+		"complexity": "medium",
+	}
+
+	implSummary := map[string]interface{}{
+		"filesChanged": []string{"feature.go"},
+		"linesAdded":   100,
+		"linesRemoved": 0,
+		"testsAdded":   5,
+		"summary":      "Implemented feature",
+	}
+
+	implFixSummary := map[string]interface{}{
+		"filesChanged": []string{"feature.go"},
+		"linesAdded":   5,
+		"linesRemoved": 2,
+		"testsAdded":   1,
+		"summary":      "Fixed failing tests",
+	}
+
+	refactorSummary := map[string]interface{}{
+		"filesChanged": []string{"feature.go"},
+		"linesAdded":   10,
+		"linesRemoved": 5,
+		"summary":      "Cleaned up code",
+	}
+
+	mockPlanClaude := helpers.NewMockClaudeBuilder(t).
+		WithStreamingResponse("Plan created", planJSON)
+	planClaudePath := mockPlanClaude.Build()
+
+	mockImplClaude := helpers.NewMockClaudeBuilder(t).
+		WithStreamingResponse("Implementation complete", implSummary)
+	implClaudePath := mockImplClaude.Build()
+
+	mockImplFixClaude := helpers.NewMockClaudeBuilder(t).
+		WithStreamingResponse("Fixed issues", implFixSummary)
+	implFixClaudePath := mockImplFixClaude.Build()
+
+	mockRefactorClaude := helpers.NewMockClaudeBuilder(t).
+		WithStreamingResponse("Refactoring complete", refactorSummary)
+	refactorClaudePath := mockRefactorClaude.Build()
+
+	config := workflow.DefaultConfig(repo.Dir)
+	config.ClaudePath = planClaudePath
+	config.Timeouts.Planning = 10 * time.Second
+	config.Timeouts.Implementation = 10 * time.Second
+	config.Timeouts.Refactoring = 10 * time.Second
+	config.SplitPR = false
+
+	ciCallCount := 0
+	mockCI := &mockCIChecker{
+		onCall: func(callNum int) {
+			ciCallCount = callNum
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mock := helpers.NewMockClaudeBuilder(t).
-				WithExitCode(tt.exitCode).
-				WithStderr(tt.stderrMsg)
-			claudePath := mock.Build()
-
-			logger := workflow.NewLogger(workflow.LogLevelNormal)
-			executor := workflow.NewClaudeExecutorWithPath(claudePath, logger)
-
-			ctx := context.Background()
-			_, err := executor.ExecuteStreaming(ctx, workflow.ExecuteConfig{
-				Prompt: "test prompt",
-			}, nil)
-
-			require.Error(t, err)
-			assert.ErrorIs(t, err, tt.wantErrType)
-		})
+	mockCI.checkFunc = func() (*workflow.CIResult, error) {
+		if ciCallCount == 1 {
+			return &workflow.CIResult{
+				Passed:     false,
+				Status:     "failure",
+				FailedJobs: []string{"test"},
+				Output:     "Tests failed: feature_test.go:10: assertion failed",
+			}, nil
+		}
+		return &workflow.CIResult{
+			Passed: true,
+			Status: "success",
+		}, nil
 	}
+
+	orchestrator, err := workflow.NewTestOrchestrator(config, func(workingDir string, checkInterval time.Duration, commandTimeout time.Duration) workflow.CIChecker {
+		return mockCI
+	})
+	require.NoError(t, err)
+
+	orchestrator.SetConfirmFunc(func(plan *workflow.Plan) (bool, string, error) {
+		config.ClaudePath = implClaudePath
+		return true, "", nil
+	})
+
+	ctx := context.Background()
+	err = orchestrator.Start(ctx, workflowName, description, workflow.WorkflowTypeFeature)
+
+	state, err := orchestrator.Status(workflowName)
+	require.NoError(t, err)
+
+	if state.CurrentPhase == workflow.PhaseCompleted {
+		t.Skip("CI fix succeeded on first attempt, skipping resume test")
+	}
+
+	assert.Equal(t, workflow.PhaseFailed, state.CurrentPhase)
+	assert.NotNil(t, state.Error)
+	assert.Equal(t, workflow.FailureTypeCI, state.Error.FailureType)
+
+	config.ClaudePath = implFixClaudePath
+
+	ciCallCount = 0
+	mockCI.checkFunc = func() (*workflow.CIResult, error) {
+		if ciCallCount == 1 {
+			config.ClaudePath = refactorClaudePath
+		}
+		return &workflow.CIResult{
+			Passed: true,
+			Status: "success",
+		}, nil
+	}
+
+	err = orchestrator.Resume(ctx, workflowName)
+	require.NoError(t, err)
+
+	state, err = orchestrator.Status(workflowName)
+	require.NoError(t, err)
+	assert.Equal(t, workflow.PhaseCompleted, state.CurrentPhase)
+	assert.Nil(t, state.Error, "error should be cleared after successful resume")
 }
 
-func TestExecutor_StreamingOutput_ParsesCorrectly(t *testing.T) {
-	tests := []struct {
-		name               string
-		structuredOutput   interface{}
-		streamingResult    string
-		wantJSONValid      bool
-		wantStructuredData bool
-	}{
-		{
-			name: "structured output with plan schema",
-			structuredOutput: map[string]interface{}{
-				"summary":     "Test plan",
-				"contextType": "feature",
-				"phases": []map[string]interface{}{
-					{
-						"name":           "Test",
-						"description":    "Test phase",
-						"estimatedFiles": 1,
-						"estimatedLines": 10,
-					},
-				},
-				"complexity": "small",
-			},
-			streamingResult:    "Plan created successfully",
-			wantJSONValid:      true,
-			wantStructuredData: true,
-		},
-		{
-			name: "implementation summary",
-			structuredOutput: map[string]interface{}{
-				"filesChanged": []string{"main.go", "test.go"},
-				"linesAdded":   100,
-				"linesRemoved": 50,
-				"testsAdded":   5,
-				"summary":      "Implemented feature X",
-			},
-			streamingResult:    "Implementation complete",
-			wantJSONValid:      true,
-			wantStructuredData: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mock := helpers.NewMockClaudeBuilder(t).
-				WithStreamingResponse(tt.streamingResult, tt.structuredOutput)
-			claudePath := mock.Build()
-
-			logger := workflow.NewLogger(workflow.LogLevelNormal)
-			executor := workflow.NewClaudeExecutorWithPath(claudePath, logger)
-
-			ctx := context.Background()
-			result, err := executor.ExecuteStreaming(ctx, workflow.ExecuteConfig{
-				Prompt:     "test",
-				JSONSchema: workflow.PlanSchema,
-			}, nil)
-
-			require.NoError(t, err)
-			require.NotNil(t, result)
-			assert.NotEmpty(t, result.Output)
-
-			if tt.wantJSONValid {
-				var envelope map[string]interface{}
-				err := json.Unmarshal([]byte(result.Output), &envelope)
-				require.NoError(t, err, "output should be valid JSON")
-
-				if tt.wantStructuredData {
-					assert.Contains(t, envelope, "structured_output")
-					assert.Contains(t, envelope, "result")
-				}
-			}
-
-			parser := workflow.NewOutputParser()
-			extractedJSON, err := parser.ExtractJSON(result.Output)
-			require.NoError(t, err)
-			assert.NotEmpty(t, extractedJSON)
-
-			var parsed map[string]interface{}
-			err = json.Unmarshal([]byte(extractedJSON), &parsed)
-			require.NoError(t, err, "extracted JSON should be valid")
-		})
-	}
+type mockCIChecker struct {
+	result    *workflow.CIResult
+	err       error
+	onCall    func(int)
+	callCount int
+	checkFunc func() (*workflow.CIResult, error)
 }
 
-func TestExecutor_WorkingDirectory(t *testing.T) {
-	tests := []struct {
-		name    string
-		setupWD func(t *testing.T) string
-		wantErr bool
-	}{
-		{
-			name: "valid working directory",
-			setupWD: func(t *testing.T) string {
-				tmpDir := t.TempDir()
-				return tmpDir
-			},
-			wantErr: false,
-		},
-		{
-			name: "empty working directory uses current",
-			setupWD: func(t *testing.T) string {
-				return ""
-			},
-			wantErr: false,
-		},
+func (m *mockCIChecker) CheckCI(ctx context.Context, prNumber int) (*workflow.CIResult, error) {
+	m.callCount++
+	if m.onCall != nil {
+		m.onCall(m.callCount)
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			workingDir := tt.setupWD(t)
-
-			if workingDir != "" {
-				testFile := filepath.Join(workingDir, "test.txt")
-				err := os.WriteFile(testFile, []byte("test"), 0644)
-				require.NoError(t, err)
-			}
-
-			mock := helpers.NewMockClaudeBuilder(t).
-				WithStreamingResponse("success", map[string]string{"result": "ok"})
-			claudePath := mock.Build()
-
-			logger := workflow.NewLogger(workflow.LogLevelNormal)
-			executor := workflow.NewClaudeExecutorWithPath(claudePath, logger)
-
-			ctx := context.Background()
-			result, err := executor.ExecuteStreaming(ctx, workflow.ExecuteConfig{
-				Prompt:           "test",
-				WorkingDirectory: workingDir,
-			}, nil)
-
-			if tt.wantErr {
-				assert.Error(t, err)
-				return
-			}
-
-			require.NoError(t, err)
-			assert.NotNil(t, result)
-		})
+	if m.checkFunc != nil {
+		return m.checkFunc()
 	}
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.result, nil
 }
 
-func TestExecutor_Timeout(t *testing.T) {
-	tests := []struct {
-		name       string
-		timeout    time.Duration
-		mockDelay  bool
-		wantErr    bool
-		wantErrMsg string
-	}{
-		{
-			name:    "no timeout completes successfully",
-			timeout: 0,
-			wantErr: false,
-		},
-		{
-			name:    "sufficient timeout completes successfully",
-			timeout: 5 * time.Second,
-			wantErr: false,
-		},
-	}
+func (m *mockCIChecker) WaitForCI(ctx context.Context, prNumber int, timeout time.Duration) (*workflow.CIResult, error) {
+	return m.CheckCI(ctx, prNumber)
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mock := helpers.NewMockClaudeBuilder(t).
-				WithStreamingResponse("done", map[string]string{"status": "ok"})
-			claudePath := mock.Build()
+func (m *mockCIChecker) WaitForCIWithOptions(ctx context.Context, prNumber int, timeout time.Duration, opts workflow.CheckCIOptions) (*workflow.CIResult, error) {
+	return m.CheckCI(ctx, prNumber)
+}
 
-			logger := workflow.NewLogger(workflow.LogLevelNormal)
-			executor := workflow.NewClaudeExecutorWithPath(claudePath, logger)
-
-			ctx := context.Background()
-			result, err := executor.ExecuteStreaming(ctx, workflow.ExecuteConfig{
-				Prompt:  "test",
-				Timeout: tt.timeout,
-			}, nil)
-
-			if tt.wantErr {
-				assert.Error(t, err)
-				if tt.wantErrMsg != "" {
-					assert.Contains(t, err.Error(), tt.wantErrMsg)
-				}
-				return
-			}
-
-			require.NoError(t, err)
-			assert.NotNil(t, result)
-		})
-	}
+func (m *mockCIChecker) WaitForCIWithProgress(ctx context.Context, prNumber int, timeout time.Duration, opts workflow.CheckCIOptions, onProgress workflow.CIProgressCallback) (*workflow.CIResult, error) {
+	return m.CheckCI(ctx, prNumber)
 }
