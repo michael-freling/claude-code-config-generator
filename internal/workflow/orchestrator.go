@@ -925,18 +925,17 @@ func (o *Orchestrator) executePRSplit(ctx context.Context, state *WorkflowState)
 			fmt.Printf("\n%s Attempt %d/%d to fix errors\n", Yellow("⚠"), attempt, o.config.MaxFixAttempts)
 		}
 
-		spinner := NewStreamingSpinnerWithLogger("Splitting PR into manageable pieces...", o.logger)
+		spinner := NewSpinner("Splitting PR into manageable pieces...")
 		spinner.Start()
 
-		result, err := o.executor.ExecuteStreaming(ctx, ExecuteConfig{
+		result, err := o.executor.Execute(ctx, ExecuteConfig{
 			Prompt:                     prompt,
 			Timeout:                    o.config.Timeouts.PRSplit,
 			JSONSchema:                 PRSplitPlanSchema,
 			DangerouslySkipPermissions: o.config.DangerouslySkipPermissions,
 			WorkingDirectory:           state.WorktreePath,
-			SessionID:                  sessionID,
-			ForceNewSession:            o.config.ForceNewSession,
-		}, spinner.OnProgress)
+			ForceNewSession:            true,
+		})
 
 		if err != nil {
 			spinner.Fail("PR split failed")

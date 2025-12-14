@@ -131,6 +131,9 @@ func (e *claudeExecutor) Execute(ctx context.Context, config ExecuteConfig) (*Ex
 	if config.JSONSchema != "" {
 		args = append(args, "--output-format", "json", "--json-schema", config.JSONSchema)
 	}
+	if config.ForceNewSession {
+		args = append(args, "--force-new-session")
+	}
 	args = append(args, config.Prompt)
 	cmd := exec.CommandContext(ctx, claudePath, args...)
 
@@ -225,8 +228,10 @@ func (e *claudeExecutor) ExecuteStreaming(ctx context.Context, config ExecuteCon
 	if config.JSONSchema != "" {
 		args = append(args, "--json-schema", config.JSONSchema)
 	}
-	// Add session resume args if session ID is provided and not forcing new session
-	if !config.ForceNewSession && config.SessionID != "" {
+	// Handle session resume vs force new session
+	if config.ForceNewSession {
+		args = append(args, "--force-new-session")
+	} else if config.SessionID != "" {
 		args = append(args, "--resume", config.SessionID)
 		if e.logger != nil {
 			e.logger.Verbose("Resuming Claude session: %s", config.SessionID)
