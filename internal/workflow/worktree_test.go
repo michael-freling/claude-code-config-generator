@@ -332,12 +332,136 @@ func TestWorktreeManager_CreateWorktree_MkdirAll(t *testing.T) {
 	}
 }
 
+func TestWorktreeManager_CreateWorktree_PreCommitSetup(t *testing.T) {
+	tests := []struct {
+		name         string
+		workflowName string
+		setupMock    func(*MockGitRunner)
+		setupFS      func(t *testing.T, worktreePath string)
+		wantErr      bool
+	}{
+		{
+			name:         "succeeds even if pre-commit setup would fail",
+			workflowName: "test-workflow",
+			setupMock: func(m *MockGitRunner) {
+				m.On("WorktreeAdd", mock.Anything, mock.Anything, mock.MatchedBy(func(path string) bool {
+					return filepath.Base(path) == "test-workflow"
+				}), "workflow/test-workflow").Return(nil)
+			},
+			setupFS: func(t *testing.T, worktreePath string) {
+				// Create pre-commit config file to trigger setup attempt
+				// The setup will fail because pre-commit command isn't available in test
+				// But worktree creation should still succeed
+				configPath := filepath.Join(worktreePath, ".pre-commit-config.yaml")
+				err := os.WriteFile(configPath, []byte("repos: []"), 0644)
+				require.NoError(t, err)
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockGitRunner := new(MockGitRunner)
+			tt.setupMock(mockGitRunner)
+
+			baseDir, err := os.MkdirTemp("", "worktree-precommit-test-*")
+			require.NoError(t, err)
+			defer os.RemoveAll(baseDir)
+
+			worktreesDir := filepath.Join(baseDir, "worktrees")
+			err = os.MkdirAll(worktreesDir, 0755)
+			require.NoError(t, err)
+
+			manager := NewWorktreeManagerWithRunner(filepath.Join(baseDir, "repo"), mockGitRunner)
+
+			// Mock the WorktreeAdd to create the worktree directory
+			mockGitRunner.On("WorktreeAdd", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+				Run(func(args mock.Arguments) {
+					worktreePath := args.Get(2).(string)
+					err := os.MkdirAll(worktreePath, 0755)
+					require.NoError(t, err)
+					gitDir := filepath.Join(worktreePath, ".git")
+					err = os.Mkdir(gitDir, 0755)
+					require.NoError(t, err)
+					if tt.setupFS != nil {
+						tt.setupFS(t, worktreePath)
+					}
+				}).Return(nil)
+
+			got, err := manager.CreateWorktree(tt.workflowName)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Contains(t, got, tt.workflowName)
+			mockGitRunner.AssertExpectations(t)
+		})
+	}
+}
+
 func dirExists(path string) bool {
 	info, err := os.Stat(path)
 	if err != nil {
 		return false
 	}
 	return info.IsDir()
+}
+
+func TestWorktreeManager_setupPreCommitHooks(t *testing.T) {
+	tests := []struct {
+		name        string
+		setup       func(t *testing.T) (worktreePath string, cleanup func())
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name: "skips when config doesn't exist",
+			setup: func(t *testing.T) (string, func()) {
+				tmpDir, err := os.MkdirTemp("", "precommit-test-*")
+				require.NoError(t, err)
+				return tmpDir, func() { os.RemoveAll(tmpDir) }
+			},
+			wantErr: false,
+		},
+		{
+			name: "skips when pre-commit command isn't available",
+			setup: func(t *testing.T) (string, func()) {
+				tmpDir, err := os.MkdirTemp("", "precommit-test-*")
+				require.NoError(t, err)
+				configPath := filepath.Join(tmpDir, ".pre-commit-config.yaml")
+				err = os.WriteFile(configPath, []byte("repos: []"), 0644)
+				require.NoError(t, err)
+				return tmpDir, func() { os.RemoveAll(tmpDir) }
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			worktreePath, cleanup := tt.setup(t)
+			defer cleanup()
+
+			manager := &worktreeManager{
+				baseDir:   "/test/repo",
+				gitRunner: &MockGitRunner{},
+			}
+
+			err := manager.setupPreCommitHooks(worktreePath)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+				return
+			}
+
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestWorktreeManager_DeleteWorktree_WithMocks(t *testing.T) {
