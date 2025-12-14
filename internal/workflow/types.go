@@ -212,6 +212,23 @@ type Commit struct {
 	Subject string `json:"subject"`
 }
 
+// FeatureRequest represents a request for implementing a feature or fix
+type FeatureRequest struct {
+	Type        WorkflowType
+	Description string
+	Feedback    []string
+}
+
+// WorkflowContext provides context for simplified prompt generation
+type WorkflowContext struct {
+	Plan         *Plan
+	WorkflowName string
+	Phase        Phase
+	Attempt      int
+	Metrics      *PRMetrics
+	Commits      []Commit
+}
+
 // Error variables for common error conditions
 var (
 	ErrInvalidWorkflowName = errors.New("invalid workflow name")

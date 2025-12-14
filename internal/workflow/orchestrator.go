@@ -14,11 +14,15 @@ import (
 	"github.com/michael-freling/claude-code-tools/internal/command"
 )
 
+// PhaseMaxTurns configures max turns per phase
+type PhaseMaxTurns map[string]int
+
 // Config holds configuration for the orchestrator
 type Config struct {
 	BaseDir                    string
 	SplitPR                    bool
 	Timeouts                   PhaseTimeouts
+	MaxTurns                   PhaseMaxTurns
 	ClaudePath                 string
 	DangerouslySkipPermissions bool
 	CICheckInterval            time.Duration
@@ -53,6 +57,13 @@ func DefaultConfig(baseDir string) *Config {
 			Implementation: 6 * time.Hour,
 			Refactoring:    6 * time.Hour,
 			PRSplit:        1 * time.Hour,
+		},
+		MaxTurns: PhaseMaxTurns{
+			"planning":       50,
+			"implementation": 100,
+			"refactoring":    80,
+			"pr-split":       30,
+			"pr-creation":    20,
 		},
 	}
 }
@@ -320,7 +331,27 @@ func (o *Orchestrator) executePlanning(ctx context.Context, state *WorkflowState
 		return fmt.Errorf("failed to save state: %w", err)
 	}
 
-	prompt, err := o.promptGenerator.GeneratePlanningPrompt(state.Type, state.Description, phaseState.Feedback)
+	var prompt string
+	var err error
+
+	// Use simplified prompt if previous attempt had ErrPromptTooLong
+	if phaseState.Attempts > 1 && len(phaseState.Feedback) > 0 {
+		lastFeedback := phaseState.Feedback[len(phaseState.Feedback)-1]
+		if strings.Contains(lastFeedback, "prompt limit") {
+			o.logger.Info("using simplified prompt due to prompt too long error", "phase", "planning", "attempt", phaseState.Attempts)
+			req := FeatureRequest{
+				Type:        state.Type,
+				Description: state.Description,
+				Feedback:    phaseState.Feedback,
+			}
+			prompt, err = o.promptGenerator.GenerateSimplifiedPlanningPrompt(req, phaseState.Attempts)
+		} else {
+			prompt, err = o.promptGenerator.GeneratePlanningPrompt(state.Type, state.Description, phaseState.Feedback)
+		}
+	} else {
+		prompt, err = o.promptGenerator.GeneratePlanningPrompt(state.Type, state.Description, phaseState.Feedback)
+	}
+
 	if err != nil {
 		return o.failWorkflow(state, fmt.Errorf("failed to generate planning prompt: %w", err))
 	}
@@ -335,6 +366,7 @@ func (o *Orchestrator) executePlanning(ctx context.Context, state *WorkflowState
 		Timeout:                    o.config.Timeouts.Planning,
 		JSONSchema:                 PlanSchema,
 		DangerouslySkipPermissions: o.config.DangerouslySkipPermissions,
+		MaxTurns:                   o.config.MaxTurns["planning"],
 		Phase:                      string(PhasePlanning),
 		Attempt:                    phaseState.Attempts,
 		StateManager:               o.stateManager,
@@ -485,7 +517,25 @@ func (o *Orchestrator) executeImplementation(ctx context.Context, state *Workflo
 
 		var prompt string
 		if attempt == 1 {
-			prompt, err = o.promptGenerator.GenerateImplementationPrompt(plan)
+			// Check if we should use simplified prompt (on retry after ErrPromptTooLong)
+			useSimplified := len(phaseState.Feedback) > 0 && strings.Contains(phaseState.Feedback[len(phaseState.Feedback)-1], "prompt limit")
+			if useSimplified {
+				// Retry with simplified prompt after ErrPromptTooLong
+				o.logger.Info("using simplified prompt due to prompt too long error", "phase", "implementation", "attempt", phaseState.Attempts)
+				ctx := &WorkflowContext{
+					Plan:    plan,
+					Phase:   PhaseImplementation,
+					Attempt: phaseState.Attempts,
+				}
+				// Use first work stream for simplified implementation
+				var workStream WorkStream
+				if len(plan.WorkStreams) > 0 {
+					workStream = plan.WorkStreams[0]
+				}
+				prompt, err = o.promptGenerator.GenerateSimplifiedImplementationPrompt(ctx, workStream, phaseState.Attempts)
+			} else {
+				prompt, err = o.promptGenerator.GenerateImplementationPrompt(plan)
+			}
 			if err != nil {
 				return o.failWorkflow(state, fmt.Errorf("failed to generate implementation prompt: %w", err))
 			}
@@ -506,6 +556,7 @@ func (o *Orchestrator) executeImplementation(ctx context.Context, state *Workflo
 			JSONSchema:                 ImplementationSummarySchema,
 			DangerouslySkipPermissions: o.config.DangerouslySkipPermissions,
 			WorkingDirectory:           state.WorktreePath,
+			MaxTurns:                   o.config.MaxTurns["implementation"],
 			Phase:                      string(PhaseImplementation),
 			Attempt:                    attempt,
 			StateManager:               o.stateManager,
@@ -655,7 +706,20 @@ func (o *Orchestrator) executeRefactoring(ctx context.Context, state *WorkflowSt
 
 		var prompt string
 		if attempt == 1 {
-			prompt, err = o.promptGenerator.GenerateRefactoringPrompt(plan)
+			// Check if we should use simplified prompt (on retry after ErrPromptTooLong)
+			useSimplified := len(phaseState.Feedback) > 0 && strings.Contains(phaseState.Feedback[len(phaseState.Feedback)-1], "prompt limit")
+			if useSimplified {
+				// Retry with simplified prompt after ErrPromptTooLong
+				o.logger.Info("using simplified prompt due to prompt too long error", "phase", "refactoring", "attempt", phaseState.Attempts)
+				ctx := &WorkflowContext{
+					Plan:    plan,
+					Phase:   PhaseRefactoring,
+					Attempt: phaseState.Attempts,
+				}
+				prompt, err = o.promptGenerator.GenerateSimplifiedRefactoringPrompt(ctx, phaseState.Attempts)
+			} else {
+				prompt, err = o.promptGenerator.GenerateRefactoringPrompt(plan)
+			}
 			if err != nil {
 				return o.failWorkflow(state, fmt.Errorf("failed to generate refactoring prompt: %w", err))
 			}
@@ -676,6 +740,7 @@ func (o *Orchestrator) executeRefactoring(ctx context.Context, state *WorkflowSt
 			JSONSchema:                 RefactoringSummarySchema,
 			DangerouslySkipPermissions: o.config.DangerouslySkipPermissions,
 			WorkingDirectory:           state.WorktreePath,
+			MaxTurns:                   o.config.MaxTurns["refactoring"],
 			Phase:                      string(PhaseRefactoring),
 			Attempt:                    attempt,
 			StateManager:               o.stateManager,
@@ -842,7 +907,26 @@ func (o *Orchestrator) executePRSplit(ctx context.Context, state *WorkflowState)
 
 		var prompt string
 		if attempt == 1 {
-			prompt, err = o.promptGenerator.GeneratePRSplitPrompt(phaseState.Metrics, commits)
+			// Check if we should use simplified prompt (on retry after ErrPromptTooLong)
+			useSimplified := len(phaseState.Feedback) > 0 && strings.Contains(phaseState.Feedback[len(phaseState.Feedback)-1], "prompt limit")
+			if useSimplified {
+				// Retry with simplified prompt after ErrPromptTooLong
+				o.logger.Info("using simplified prompt due to prompt too long error", "phase", "pr-split", "attempt", phaseState.Attempts)
+				// Convert command.Commit to workflow.Commit for the context
+				workflowCommits := make([]Commit, len(commits))
+				for i, c := range commits {
+					workflowCommits[i] = Commit{Hash: c.Hash, Subject: c.Subject}
+				}
+				ctx := &WorkflowContext{
+					Phase:   PhasePRSplit,
+					Attempt: phaseState.Attempts,
+					Metrics: phaseState.Metrics,
+					Commits: workflowCommits,
+				}
+				prompt, err = o.promptGenerator.GenerateSimplifiedPRSplitPrompt(ctx, phaseState.Attempts)
+			} else {
+				prompt, err = o.promptGenerator.GeneratePRSplitPrompt(phaseState.Metrics, commits)
+			}
 			if err != nil {
 				return o.failWorkflow(state, fmt.Errorf("failed to generate PR split prompt: %w", err))
 			}
@@ -863,6 +947,7 @@ func (o *Orchestrator) executePRSplit(ctx context.Context, state *WorkflowState)
 			JSONSchema:                 PRSplitPlanSchema,
 			DangerouslySkipPermissions: o.config.DangerouslySkipPermissions,
 			WorkingDirectory:           state.WorktreePath,
+			MaxTurns:                   o.config.MaxTurns["pr-split"],
 			Phase:                      string(PhasePRSplit),
 			Attempt:                    attempt,
 			StateManager:               o.stateManager,
@@ -1045,6 +1130,7 @@ func (o *Orchestrator) executePRCreation(ctx context.Context, state *WorkflowSta
 			JSONSchema:                 PRCreationResultSchema,
 			DangerouslySkipPermissions: o.config.DangerouslySkipPermissions,
 			WorkingDirectory:           workingDir,
+			MaxTurns:                   o.config.MaxTurns["pr-creation"],
 			Phase:                      "CREATE_PR",
 			Attempt:                    attempt,
 			StateManager:               o.stateManager,

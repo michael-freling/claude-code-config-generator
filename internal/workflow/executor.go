@@ -70,10 +70,12 @@ type ExecuteConfig struct {
 	Env                        map[string]string
 	JSONSchema                 string
 	DangerouslySkipPermissions bool
-	Phase                      string
-	Attempt                    int
-	StateManager               StateManager
-	WorkflowName               string
+	// MaxTurns limits the number of iterations in Claude's agentic loop
+	MaxTurns     int
+	Phase        string
+	Attempt      int
+	StateManager StateManager
+	WorkflowName string
 }
 
 // ExecuteResult holds the result of Claude CLI execution
@@ -217,6 +219,9 @@ func (e *claudeExecutor) Execute(ctx context.Context, config ExecuteConfig) (*Ex
 	if config.JSONSchema != "" {
 		args = append(args, "--output-format", "json", "--json-schema", config.JSONSchema)
 	}
+	if config.MaxTurns > 0 {
+		args = append(args, "--max-turns", fmt.Sprintf("%d", config.MaxTurns))
+	}
 	args = append(args, config.Prompt)
 
 	e.logPromptIfVerbose(config, args)
@@ -313,6 +318,9 @@ func (e *claudeExecutor) ExecuteStreaming(ctx context.Context, config ExecuteCon
 	}
 	if config.JSONSchema != "" {
 		args = append(args, "--json-schema", config.JSONSchema)
+	}
+	if config.MaxTurns > 0 {
+		args = append(args, "--max-turns", fmt.Sprintf("%d", config.MaxTurns))
 	}
 	args = append(args, config.Prompt)
 
