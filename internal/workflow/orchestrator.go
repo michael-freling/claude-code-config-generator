@@ -362,6 +362,10 @@ func (o *Orchestrator) executePlanning(ctx context.Context, state *WorkflowState
 		DangerouslySkipPermissions: o.config.DangerouslySkipPermissions,
 		SessionID:                  sessionID,
 		ForceNewSession:            o.config.ForceNewSession,
+		Phase:                      string(PhasePlanning),
+		Attempt:                    phaseState.Attempts,
+		StateManager:               o.stateManager,
+		WorkflowName:               state.Name,
 	}, spinner.OnProgress)
 
 	if err != nil {
@@ -547,6 +551,10 @@ func (o *Orchestrator) executeImplementation(ctx context.Context, state *Workflo
 			WorkingDirectory:           state.WorktreePath,
 			SessionID:                  sessionID,
 			ForceNewSession:            o.config.ForceNewSession,
+			Phase:                      string(PhaseImplementation),
+			Attempt:                    attempt,
+			StateManager:               o.stateManager,
+			WorkflowName:               state.Name,
 		}, spinner.OnProgress)
 
 		if err != nil {
@@ -733,6 +741,10 @@ func (o *Orchestrator) executeRefactoring(ctx context.Context, state *WorkflowSt
 			WorkingDirectory:           state.WorktreePath,
 			SessionID:                  sessionID,
 			ForceNewSession:            o.config.ForceNewSession,
+			Phase:                      string(PhaseRefactoring),
+			Attempt:                    attempt,
+			StateManager:               o.stateManager,
+			WorkflowName:               state.Name,
 		}, spinner.OnProgress)
 
 		if err != nil {
@@ -935,6 +947,10 @@ func (o *Orchestrator) executePRSplit(ctx context.Context, state *WorkflowState)
 			DangerouslySkipPermissions: o.config.DangerouslySkipPermissions,
 			WorkingDirectory:           state.WorktreePath,
 			ForceNewSession:            true,
+			Phase:                      string(PhasePRSplit),
+			Attempt:                    attempt,
+			StateManager:               o.stateManager,
+			WorkflowName:               state.Name,
 		})
 
 		if err != nil {
@@ -1155,6 +1171,10 @@ func (o *Orchestrator) executePRCreation(ctx context.Context, state *WorkflowSta
 			WorkingDirectory:           workingDir,
 			SessionID:                  sessionID,
 			ForceNewSession:            o.config.ForceNewSession,
+			Phase:                      "CREATE_PR",
+			Attempt:                    attempt,
+			StateManager:               o.stateManager,
+			WorkflowName:               state.Name,
 		}, spinner.OnProgress)
 
 		if err != nil {
