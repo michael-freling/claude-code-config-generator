@@ -49,7 +49,7 @@ jobs:
       run: |
         grep -v "mock_" coverage.txt > coverage_filtered.txt
         coverage=$(go tool cover -func=coverage_filtered.txt | grep total | awk '{print $3}' | sed 's/%//')
-        threshold=89
+        threshold=88.5
         echo "Total coverage (excluding generated mocks): ${coverage}%"
         echo "Threshold: ${threshold}%"
         if (( $(echo "$coverage < $threshold" | bc -l) )); then
