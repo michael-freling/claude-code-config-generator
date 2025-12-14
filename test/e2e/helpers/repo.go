@@ -117,3 +117,41 @@ func (r *TempRepo) RunGit(args ...string) (string, error) {
 
 	return string(output), nil
 }
+
+// CloneRepo clones a git repository to a temporary directory
+func CloneRepo(t *testing.T, url string) *TempRepo {
+	t.Helper()
+
+	dir, err := os.MkdirTemp("", "e2e-clone-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+
+	repo := &TempRepo{
+		Dir: dir,
+		t:   t,
+	}
+
+	cmd := exec.Command("git", "clone", url, dir)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		_ = os.RemoveAll(dir)
+		t.Fatalf("failed to clone repo: %v: %s", err, string(output))
+	}
+
+	if _, err := repo.RunGit("config", "user.email", "test@test.com"); err != nil {
+		_ = os.RemoveAll(dir)
+		t.Fatalf("failed to configure git user.email: %v", err)
+	}
+
+	if _, err := repo.RunGit("config", "user.name", "Test User"); err != nil {
+		_ = os.RemoveAll(dir)
+		t.Fatalf("failed to configure git user.name: %v", err)
+	}
+
+	t.Cleanup(func() {
+		repo.Cleanup()
+	})
+
+	return repo
+}
