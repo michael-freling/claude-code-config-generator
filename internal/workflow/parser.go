@@ -41,6 +41,12 @@ type claudeJSONResponse struct {
 func (p *outputParser) ExtractJSON(output string) (string, error) {
 	trimmed := strings.TrimSpace(output)
 
+	// Early detection: check for text-only before JSON parsing attempts
+	if p.isTextOnlyResponse(trimmed) {
+		preview := truncateOutput(output, 500)
+		return "", fmt.Errorf("text-only response detected: Claude ignored schema constraint and returned text/markdown instead of required JSON format.\n\nClaude output preview:\n%s\n\n%w", preview, ErrParseJSON)
+	}
+
 	// First, try to parse as Claude CLI JSON envelope (from --output-format json)
 	if json.Valid([]byte(trimmed)) {
 		var envelope claudeJSONResponse
@@ -57,11 +63,6 @@ func (p *outputParser) ExtractJSON(output string) (string, error) {
 	// Fall back to looking for markdown code blocks
 	blocks := p.findJSONBlocks(output)
 	if len(blocks) == 0 {
-		// Detect if the response is text-only (Claude ignored schema constraints)
-		if p.isTextOnlyResponse(trimmed) {
-			preview := truncateOutput(output, 500)
-			return "", fmt.Errorf("text-only response detected: Claude ignored schema constraint and returned text/markdown instead of required JSON format.\n\nClaude output preview:\n%s\n\n%w", preview, ErrParseJSON)
-		}
 		preview := truncateOutput(output, 500)
 		return "", fmt.Errorf("no JSON blocks found in output.\n\nClaude output preview:\n%s\n\n%w", preview, ErrParseJSON)
 	}
@@ -179,13 +180,30 @@ func (p *outputParser) findJSONBlocks(output string) []string {
 // unmarshalJSON unmarshals JSON string into target
 func (p *outputParser) unmarshalJSON(jsonStr string, target interface{}) error {
 	if err := json.Unmarshal([]byte(jsonStr), target); err != nil {
-		return fmt.Errorf("invalid JSON %w: %w", ErrParseJSON, err)
+		return fmt.Errorf("invalid JSON: %w", err)
 	}
 	return nil
 }
 
-// isTextOnlyResponse detects if the response contains only text/markdown without JSON
+// isTextOnlyResponse detects when Claude ignored the JSON schema constraint
+// and returned natural language instead. Uses heuristics including markdown
+// indicators, sentence patterns, and common refusal phrases.
+// Note: May have false negatives if text contains { or [ characters.
 func (p *outputParser) isTextOnlyResponse(output string) bool {
+	// Check for common Claude refusal/explanation patterns
+	lowerOutput := strings.ToLower(output)
+	refusalPatterns := []string{
+		"i cannot",
+		"i apologize",
+		"i'm unable",
+		"unfortunately,",
+	}
+	for _, pattern := range refusalPatterns {
+		if strings.Contains(lowerOutput, pattern) {
+			return true
+		}
+	}
+
 	// Check if the output contains common indicators of text-only responses
 	// Look for markdown headers, paragraphs, or sentences without any JSON-like structures
 

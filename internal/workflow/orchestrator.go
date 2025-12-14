@@ -335,6 +335,7 @@ func (o *Orchestrator) executePlanning(ctx context.Context, state *WorkflowState
 		Timeout:                    o.config.Timeouts.Planning,
 		JSONSchema:                 PlanSchema,
 		DangerouslySkipPermissions: o.config.DangerouslySkipPermissions,
+		ForceNewSession:            true,
 	}, spinner.OnProgress)
 
 	if err != nil {
@@ -502,6 +503,7 @@ func (o *Orchestrator) executeImplementation(ctx context.Context, state *Workflo
 			JSONSchema:                 ImplementationSummarySchema,
 			DangerouslySkipPermissions: o.config.DangerouslySkipPermissions,
 			WorkingDirectory:           state.WorktreePath,
+			ForceNewSession:            true,
 		}, spinner.OnProgress)
 
 		if err != nil {
@@ -668,6 +670,7 @@ func (o *Orchestrator) executeRefactoring(ctx context.Context, state *WorkflowSt
 			JSONSchema:                 RefactoringSummarySchema,
 			DangerouslySkipPermissions: o.config.DangerouslySkipPermissions,
 			WorkingDirectory:           state.WorktreePath,
+			ForceNewSession:            true,
 		}, spinner.OnProgress)
 
 		if err != nil {
@@ -795,7 +798,8 @@ func (o *Orchestrator) executeRefactoring(ctx context.Context, state *WorkflowSt
 	return o.transitionPhase(state, PhaseCompleted)
 }
 
-// executePRSplit runs the PR split phase with error-checking loop
+// executePRSplit runs the PR split phase with error-checking loop.
+// Uses Execute with ForceNewSession to ensure clean session state for JSON schema enforcement.
 func (o *Orchestrator) executePRSplit(ctx context.Context, state *WorkflowState) error {
 	fmt.Printf("\n%s\n", Bold(FormatPhase(PhasePRSplit, 5)))
 	fmt.Println(strings.Repeat("-", len(FormatPhase(PhasePRSplit, 5))))
@@ -1030,6 +1034,7 @@ func (o *Orchestrator) executePRCreation(ctx context.Context, state *WorkflowSta
 			JSONSchema:                 PRCreationResultSchema,
 			DangerouslySkipPermissions: o.config.DangerouslySkipPermissions,
 			WorkingDirectory:           workingDir,
+			ForceNewSession:            true,
 		}, spinner.OnProgress)
 
 		if err != nil {

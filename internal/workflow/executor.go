@@ -105,7 +105,9 @@ func NewClaudeExecutorWithRunner(claudePath string, cmdRunner command.Runner, lo
 	}
 }
 
-// Execute runs the Claude CLI with the given configuration
+// Execute runs the Claude CLI with the given configuration.
+// When JSONSchema is set, uses --output-format json with --json-schema to enforce
+// schema validation. The structured output will be returned in the Output field.
 func (e *claudeExecutor) Execute(ctx context.Context, config ExecuteConfig) (*ExecuteResult, error) {
 	if config.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -201,7 +203,10 @@ func (e *claudeExecutor) buildEnv(env map[string]string) []string {
 	return result
 }
 
-// ExecuteStreaming runs the Claude CLI with streaming output and progress callbacks
+// ExecuteStreaming runs the Claude CLI with streaming output and progress callbacks.
+// When JSONSchema is set, stream-json format is compatible with --json-schema and the
+// structured output will be available in finalChunk.StructuredOutput, which is then
+// wrapped in an envelope and returned in the Output field.
 func (e *claudeExecutor) ExecuteStreaming(ctx context.Context, config ExecuteConfig, onProgress func(ProgressEvent)) (*ExecuteResult, error) {
 	if config.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -286,7 +291,9 @@ func (e *claudeExecutor) ExecuteStreaming(ctx context.Context, config ExecuteCon
 
 		var chunk StreamChunk
 		if err := json.Unmarshal(line, &chunk); err != nil {
-			// Skip malformed lines
+			if e.logger != nil {
+				e.logger.Verbose("Skipping malformed JSON line: %s", string(line))
+			}
 			continue
 		}
 
@@ -363,6 +370,12 @@ func (e *claudeExecutor) ExecuteStreaming(ctx context.Context, config ExecuteCon
 	// Extract output from final chunk
 	if finalChunk != nil {
 		if len(finalChunk.StructuredOutput) > 0 {
+			// Validate that StructuredOutput is valid JSON
+			if !json.Valid(finalChunk.StructuredOutput) {
+				result.Error = fmt.Errorf("structured output is not valid JSON")
+				return result, result.Error
+			}
+
 			// Wrap structured output in the expected envelope format
 			envelope := map[string]interface{}{
 				"type":              "result",
@@ -377,6 +390,11 @@ func (e *claudeExecutor) ExecuteStreaming(ctx context.Context, config ExecuteCon
 			}
 			result.Output = string(envelopeBytes)
 		} else {
+			// If JSONSchema was requested but no structured output received, return error
+			if config.JSONSchema != "" {
+				result.Error = fmt.Errorf("JSON schema was requested but no structured output was received")
+				return result, result.Error
+			}
 			result.Output = finalChunk.Result
 		}
 	}

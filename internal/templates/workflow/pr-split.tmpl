@@ -1,4 +1,10 @@
 CRITICAL: Your response MUST be ONLY valid JSON. Do NOT include any markdown, explanations, analysis, or text outside the JSON object.
+DO NOT include any explanations, analysis, or markdown commentary.
+DO NOT wrap JSON in code blocks (no ```).
+Your entire response must be the raw JSON object starting with { and ending with }.
+
+IMPORTANT: The following context is for your analysis ONLY. DO NOT output any commentary about this context.
+Your ONLY output must be the JSON object following the schema at the end of this prompt.
 
 You need to split the current changes into multiple pull requests for easier review.
 
@@ -126,4 +132,9 @@ For "files" strategy, use files array instead of commits:
   "summary": "Brief explanation of why this split makes sense"
 }
 
-REMINDER: Output ONLY the JSON object. No markdown formatting, no code blocks, no explanatory text before or after the JSON.
+CRITICAL FINAL REMINDER:
+- Output ONLY the raw JSON object
+- NO markdown code blocks (no ```)
+- NO explanatory text before or after the JSON
+- NO conversational responses
+- Your response must start with { and end with }
