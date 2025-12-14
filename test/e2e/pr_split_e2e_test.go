@@ -251,7 +251,6 @@ func TestStateManager_PRSplitPersistence(t *testing.T) {
 						Number:      1,
 						URL:         "https://github.com/org/repo/pull/1",
 						Title:       "Parent PR",
-						Branch:      "parent-branch",
 						Description: "Parent description",
 					},
 					ChildPRs: []workflow.PRInfo{
@@ -259,14 +258,12 @@ func TestStateManager_PRSplitPersistence(t *testing.T) {
 							Number:      2,
 							URL:         "https://github.com/org/repo/pull/2",
 							Title:       "Child PR 1",
-							Branch:      "child-branch-1",
 							Description: "First child",
 						},
 						{
 							Number:      3,
 							URL:         "https://github.com/org/repo/pull/3",
 							Title:       "Child PR 2",
-							Branch:      "child-branch-2",
 							Description: "Second child",
 						},
 					},
