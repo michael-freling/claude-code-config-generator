@@ -73,10 +73,15 @@ go test -tags=e2e -timeout=10m ./test/e2e/...
 ### Workflow E2E Tests
 
 - `workflow_e2e_test.go` - Tests complete workflow execution with real Claude
-  - `TestWorkflow_SimpleFeature_E2E` - Full workflow with minimal feature (saves time/cost)
-  - Uses real Claude for planning, implementation, and refactoring phases
-  - Auto-confirms plans to avoid interactive blocking
-  - Uses mock CI checker (temp repos don't have real CI)
+  - `TestWorkflow_SimpleFeature_E2E` - Full workflow with minimal feature in temp repo (saves time/cost)
+    - Uses real Claude for planning, implementation, and refactoring phases
+    - Auto-confirms plans to avoid interactive blocking
+    - Uses mock CI checker (temp repos don't have real CI)
+  - `TestWorkflow_FeatureWorkflow_E2E` - Full workflow with REAL CI using sandbox repository
+    - Uses sandbox repo: https://github.com/michael-freling/claude-code-sandbox
+    - Creates real commits, PRs, and waits for real CI checks
+    - Automatically cleans up PRs and branches after test
+    - Requires GitHub authentication (`gh auth login`)
 
 ### Real CLI Tests
 
@@ -89,11 +94,27 @@ go test -tags=e2e -timeout=10m ./test/e2e/...
 
 - `helpers/` - Test helper utilities
   - `claude.go` - Claude CLI detection and availability checks
-  - `repo.go` - Temporary Git repository management
+  - `repo.go` - Temporary Git repository management and cloning
   - `git.go`, `gh.go` - Git and GitHub CLI test utilities
   - `cleanup.go` - Resource cleanup helpers
 
 Note: `mock_claude.go` is still available for unit tests but is NOT used in E2E tests.
+
+## Sandbox Repository
+
+Some E2E tests use a dedicated sandbox repository at https://github.com/michael-freling/claude-code-sandbox. This allows tests to:
+
+- Create real commits and branches
+- Create real pull requests
+- Run real CI checks (no mocking)
+- Test the complete workflow in a realistic environment
+
+**Important notes about sandbox repo tests:**
+- Tests create unique branch names with timestamps to avoid conflicts
+- All PRs and branches are automatically cleaned up after tests
+- Requires GitHub authentication: `gh auth login`
+- CI checks may pass or fail - tests validate that checks run, not that they pass
+- Keep test descriptions simple to minimize Claude API costs
 
 ## Writing E2E Tests
 

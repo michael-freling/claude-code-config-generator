@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -11,6 +12,12 @@ import (
 	"github.com/michael-freling/claude-code-tools/test/e2e/helpers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+)
+
+const (
+	sandboxRepoURL   = "https://github.com/michael-freling/claude-code-sandbox"
+	sandboxRepoOwner = "michael-freling"
+	sandboxRepoName  = "claude-code-sandbox"
 )
 
 // TestWorkflow_SimpleFeature_E2E tests a simple feature workflow with real Claude.
@@ -137,4 +144,136 @@ func (m *mockCIChecker) WaitForCIWithOptions(ctx context.Context, prNumber int, 
 
 func (m *mockCIChecker) WaitForCIWithProgress(ctx context.Context, prNumber int, timeout time.Duration, opts workflow.CheckCIOptions, onProgress workflow.CIProgressCallback) (*workflow.CIResult, error) {
 	return m.CheckCI(ctx, prNumber)
+}
+
+// TestWorkflow_FeatureWorkflow_E2E tests a complete feature workflow with real CI checks
+// using the sandbox repository. This test creates real commits, PRs, and waits for real CI.
+func TestWorkflow_FeatureWorkflow_E2E(t *testing.T) {
+	helpers.RequireClaude(t)
+	helpers.RequireGit(t)
+	helpers.RequireGHAuth(t)
+
+	// Clone the sandbox repo to a temp directory
+	repo := helpers.CloneRepo(t, sandboxRepoURL)
+
+	// Create a unique branch name to avoid conflicts
+	branchName := fmt.Sprintf("e2e-test-%d", time.Now().Unix())
+
+	// Track PR number for cleanup
+	var prNumber int
+
+	// Setup cleanup to delete PR and branch
+	t.Cleanup(func() {
+		if prNumber > 0 {
+			// Close the PR
+			closeCmd := fmt.Sprintf("gh pr close %d --repo %s/%s --delete-branch", prNumber, sandboxRepoOwner, sandboxRepoName)
+			t.Logf("Cleaning up PR: %s", closeCmd)
+			output, err := repo.RunGit("sh", "-c", closeCmd)
+			if err != nil {
+				t.Logf("Warning: failed to close PR %d: %v: %s", prNumber, err, output)
+			}
+		}
+
+		// Delete the branch if it still exists
+		deleteCmd := fmt.Sprintf("git push origin --delete %s", branchName)
+		t.Logf("Cleaning up branch: %s", deleteCmd)
+		output, err := repo.RunGit("sh", "-c", deleteCmd)
+		if err != nil {
+			t.Logf("Warning: failed to delete branch %s: %v: %s", branchName, err, output)
+		}
+	})
+
+	workflowName := "test-feature-sandbox"
+	// Keep description SIMPLE to minimize Claude execution time and cost
+	description := "Add a Subtract function to the calculator that takes two integers and returns their difference"
+
+	// Create config with REAL Claude CLI and REAL CI checker
+	config := workflow.DefaultConfig(repo.Dir)
+	config.Timeouts.Planning = 5 * time.Minute
+	config.Timeouts.Implementation = 5 * time.Minute
+	config.Timeouts.Refactoring = 5 * time.Minute
+	config.CICheckTimeout = 10 * time.Minute // CI can take several minutes
+	config.SplitPR = false
+	config.LogLevel = workflow.LogLevelVerbose
+
+	// Create orchestrator with REAL CI checker (no mocks!)
+	orchestrator, err := workflow.NewTestOrchestrator(config, nil)
+	require.NoError(t, err)
+
+	// Auto-confirm to avoid interactive blocking
+	confirmCalled := false
+	orchestrator.SetConfirmFunc(func(plan *workflow.Plan) (bool, string, error) {
+		confirmCalled = true
+		assert.NotEmpty(t, plan.Summary, "plan summary should not be empty")
+		assert.NotEmpty(t, plan.ContextType, "plan context type should not be empty")
+		t.Logf("Plan received: %s", plan.Summary)
+		return true, "", nil
+	})
+
+	// Run the workflow with REAL Claude and REAL CI
+	ctx := context.Background()
+	err = orchestrator.Start(ctx, workflowName, description, workflow.WorkflowTypeFeature)
+
+	// Get workflow state
+	state, statusErr := orchestrator.Status(workflowName)
+	require.NoError(t, statusErr)
+
+	// Get PR number from worktree using gh CLI
+	if state.WorktreePath != "" {
+		prListOutput, ghErr := repo.RunGit("sh", "-c", fmt.Sprintf("cd %s && gh pr list --head $(git rev-parse --abbrev-ref HEAD) --json number --jq '.[0].number'", state.WorktreePath))
+		if ghErr == nil && prListOutput != "" {
+			fmt.Sscanf(prListOutput, "%d", &prNumber)
+			if prNumber > 0 {
+				t.Logf("Found PR #%d", prNumber)
+			}
+		}
+	}
+
+	// Verify workflow completed or failed (CI may pass or fail)
+	if err != nil {
+		t.Logf("Workflow error: %v", err)
+		// Check if workflow reached a terminal state
+		if state.CurrentPhase != workflow.PhaseCompleted && state.CurrentPhase != workflow.PhaseFailed {
+			require.NoError(t, err, "workflow should reach completion or failure state")
+		}
+		t.Logf("Workflow ended in phase: %s (this is acceptable for E2E test validation)", state.CurrentPhase)
+	}
+
+	// Verify workflow execution
+	assert.True(t, confirmCalled, "confirm function should have been called")
+
+	state, err = orchestrator.Status(workflowName)
+	require.NoError(t, err)
+
+	// Verify planning phase completed
+	planningPhase := state.Phases[workflow.PhasePlanning]
+	assert.Equal(t, workflow.StatusCompleted, planningPhase.Status, "planning phase should complete")
+	assert.Greater(t, planningPhase.Attempts, 0, "planning phase should have at least one attempt")
+
+	// Verify implementation phase completed
+	implPhase := state.Phases[workflow.PhaseImplementation]
+	assert.Equal(t, workflow.StatusCompleted, implPhase.Status, "implementation phase should complete")
+
+	// Verify refactoring phase completed
+	refactorPhase := state.Phases[workflow.PhaseRefactoring]
+	assert.Equal(t, workflow.StatusCompleted, refactorPhase.Status, "refactoring phase should complete")
+
+	// Verify PR was created
+	assert.Greater(t, prNumber, 0, "PR should be created")
+
+	// Verify worktree was created
+	assert.NotEmpty(t, state.WorktreePath, "worktree path should be set")
+
+	// Verify plan was saved
+	stateManager := workflow.NewStateManager(repo.Dir)
+	plan, err := stateManager.LoadPlan(workflowName)
+	require.NoError(t, err)
+	assert.NotEmpty(t, plan.Summary, "saved plan should have summary")
+	t.Logf("Final plan: %+v", plan)
+
+	// Log final state
+	t.Logf("Workflow final phase: %s", state.CurrentPhase)
+	if prNumber > 0 {
+		t.Logf("PR URL: https://github.com/%s/%s/pull/%d", sandboxRepoOwner, sandboxRepoName, prNumber)
+	}
 }
