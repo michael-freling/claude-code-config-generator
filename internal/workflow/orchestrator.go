@@ -335,7 +335,10 @@ func (o *Orchestrator) executePlanning(ctx context.Context, state *WorkflowState
 		Timeout:                    o.config.Timeouts.Planning,
 		JSONSchema:                 PlanSchema,
 		DangerouslySkipPermissions: o.config.DangerouslySkipPermissions,
-		ForceNewSession:            true,
+		Phase:                      string(PhasePlanning),
+		Attempt:                    phaseState.Attempts,
+		StateManager:               o.stateManager,
+		WorkflowName:               state.Name,
 	}, spinner.OnProgress)
 
 	if err != nil {
@@ -503,7 +506,10 @@ func (o *Orchestrator) executeImplementation(ctx context.Context, state *Workflo
 			JSONSchema:                 ImplementationSummarySchema,
 			DangerouslySkipPermissions: o.config.DangerouslySkipPermissions,
 			WorkingDirectory:           state.WorktreePath,
-			ForceNewSession:            true,
+			Phase:                      string(PhaseImplementation),
+			Attempt:                    attempt,
+			StateManager:               o.stateManager,
+			WorkflowName:               state.Name,
 		}, spinner.OnProgress)
 
 		if err != nil {
@@ -670,7 +676,10 @@ func (o *Orchestrator) executeRefactoring(ctx context.Context, state *WorkflowSt
 			JSONSchema:                 RefactoringSummarySchema,
 			DangerouslySkipPermissions: o.config.DangerouslySkipPermissions,
 			WorkingDirectory:           state.WorktreePath,
-			ForceNewSession:            true,
+			Phase:                      string(PhaseRefactoring),
+			Attempt:                    attempt,
+			StateManager:               o.stateManager,
+			WorkflowName:               state.Name,
 		}, spinner.OnProgress)
 
 		if err != nil {
@@ -799,7 +808,6 @@ func (o *Orchestrator) executeRefactoring(ctx context.Context, state *WorkflowSt
 }
 
 // executePRSplit runs the PR split phase with error-checking loop.
-// Uses Execute with ForceNewSession to ensure clean session state for JSON schema enforcement.
 func (o *Orchestrator) executePRSplit(ctx context.Context, state *WorkflowState) error {
 	fmt.Printf("\n%s\n", Bold(FormatPhase(PhasePRSplit, 5)))
 	fmt.Println(strings.Repeat("-", len(FormatPhase(PhasePRSplit, 5))))
@@ -855,7 +863,10 @@ func (o *Orchestrator) executePRSplit(ctx context.Context, state *WorkflowState)
 			JSONSchema:                 PRSplitPlanSchema,
 			DangerouslySkipPermissions: o.config.DangerouslySkipPermissions,
 			WorkingDirectory:           state.WorktreePath,
-			ForceNewSession:            true,
+			Phase:                      string(PhasePRSplit),
+			Attempt:                    attempt,
+			StateManager:               o.stateManager,
+			WorkflowName:               state.Name,
 		})
 
 		if err != nil {
@@ -1034,7 +1045,10 @@ func (o *Orchestrator) executePRCreation(ctx context.Context, state *WorkflowSta
 			JSONSchema:                 PRCreationResultSchema,
 			DangerouslySkipPermissions: o.config.DangerouslySkipPermissions,
 			WorkingDirectory:           workingDir,
-			ForceNewSession:            true,
+			Phase:                      "CREATE_PR",
+			Attempt:                    attempt,
+			StateManager:               o.stateManager,
+			WorkflowName:               state.Name,
 		}, spinner.OnProgress)
 
 		if err != nil {
