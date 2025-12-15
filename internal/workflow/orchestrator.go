@@ -231,6 +231,20 @@ func (o *Orchestrator) List() ([]WorkflowInfo, error) {
 
 // Delete removes a workflow and all its state
 func (o *Orchestrator) Delete(name string) error {
+	// Load state to get worktree path
+	state, err := o.stateManager.LoadState(name)
+	if err != nil {
+		// If we can't load state, still try to delete the workflow
+		o.logger.Verbose("Failed to load state for worktree cleanup: %v", err)
+	} else if state.WorktreePath != "" {
+		o.logger.Verbose("Deleting worktree at: %s", state.WorktreePath)
+		if err := o.worktreeManager.DeleteWorktree(state.WorktreePath); err != nil {
+			o.logger.Info("Failed to delete worktree (continuing with state deletion): %v", err)
+		} else {
+			o.logger.Verbose("Worktree deleted successfully")
+		}
+	}
+
 	return o.stateManager.DeleteWorkflow(name)
 }
 
@@ -244,6 +258,17 @@ func (o *Orchestrator) Clean() ([]string, error) {
 	var deleted []string
 	for _, wf := range workflows {
 		if wf.Status == "completed" {
+			// Try to load state to get worktree path
+			state, err := o.stateManager.LoadState(wf.Name)
+			if err == nil && state.WorktreePath != "" {
+				o.logger.Verbose("Deleting worktree for workflow %s at: %s", wf.Name, state.WorktreePath)
+				if err := o.worktreeManager.DeleteWorktree(state.WorktreePath); err != nil {
+					o.logger.Info("Failed to delete worktree for workflow %s (continuing): %v", wf.Name, err)
+				} else {
+					o.logger.Verbose("Worktree deleted successfully for workflow %s", wf.Name)
+				}
+			}
+
 			if err := o.stateManager.DeleteWorkflow(wf.Name); err != nil {
 				continue
 			}
