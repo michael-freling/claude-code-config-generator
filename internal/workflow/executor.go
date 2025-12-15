@@ -74,47 +74,54 @@ type ExecuteConfig struct {
 	Attempt                    int
 	StateManager               StateManager
 	WorkflowName               string
+	SessionID                  string // Session ID to resume (empty for new session)
+	ForceNewSession            bool   // Force creating a new session even if SessionID is set
 }
 
 // ExecuteResult holds the result of Claude CLI execution
 type ExecuteResult struct {
-	Output   string
-	ExitCode int
-	Duration time.Duration
-	Error    error
+	Output    string // Parsed output (final result or structured output)
+	RawOutput string // Raw streaming output for session ID parsing
+	ExitCode  int
+	Duration  time.Duration
+	Error     error
 }
 
 // claudeExecutor implements ClaudeExecutor interface
 type claudeExecutor struct {
-	claudePath string
-	cmdRunner  command.Runner
-	logger     Logger
+	claudePath     string
+	cmdRunner      command.Runner
+	logger         Logger
+	sessionManager *SessionManager
 }
 
 // NewClaudeExecutor creates executor with default settings
 func NewClaudeExecutor(logger Logger) ClaudeExecutor {
 	return &claudeExecutor{
-		claudePath: "claude",
-		cmdRunner:  command.NewRunner(),
-		logger:     logger,
+		claudePath:     "claude",
+		cmdRunner:      command.NewRunner(),
+		logger:         logger,
+		sessionManager: NewSessionManager(logger),
 	}
 }
 
 // NewClaudeExecutorWithPath creates executor with custom claude path
 func NewClaudeExecutorWithPath(claudePath string, logger Logger) ClaudeExecutor {
 	return &claudeExecutor{
-		claudePath: claudePath,
-		cmdRunner:  command.NewRunner(),
-		logger:     logger,
+		claudePath:     claudePath,
+		cmdRunner:      command.NewRunner(),
+		logger:         logger,
+		sessionManager: NewSessionManager(logger),
 	}
 }
 
 // NewClaudeExecutorWithRunner creates executor with custom command runner (for testing)
 func NewClaudeExecutorWithRunner(claudePath string, cmdRunner command.Runner, logger Logger) ClaudeExecutor {
 	return &claudeExecutor{
-		claudePath: claudePath,
-		cmdRunner:  cmdRunner,
-		logger:     logger,
+		claudePath:     claudePath,
+		cmdRunner:      cmdRunner,
+		logger:         logger,
+		sessionManager: NewSessionManager(logger),
 	}
 }
 
@@ -314,6 +321,11 @@ func (e *claudeExecutor) ExecuteStreaming(ctx context.Context, config ExecuteCon
 	if config.JSONSchema != "" {
 		args = append(args, "--json-schema", config.JSONSchema)
 	}
+	// Add session resume args if session ID is provided
+	sessionArgs := e.sessionManager.BuildCommandArgs(config.SessionID, config.ForceNewSession)
+	if len(sessionArgs) > 0 {
+		args = append(args, sessionArgs...)
+	}
 	args = append(args, config.Prompt)
 
 	e.logPromptIfVerbose(config, args)
@@ -365,12 +377,17 @@ func (e *claudeExecutor) ExecuteStreaming(ctx context.Context, config ExecuteCon
 
 	var finalChunk *StreamChunk
 	toolCallCount := 0
+	var allOutput strings.Builder
 
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if len(line) == 0 {
 			continue
 		}
+
+		// Collect all output for session ID parsing
+		allOutput.Write(line)
+		allOutput.WriteByte('\n')
 
 		var chunk StreamChunk
 		if err := json.Unmarshal(line, &chunk); err != nil {
@@ -438,6 +455,21 @@ func (e *claudeExecutor) ExecuteStreaming(ctx context.Context, config ExecuteCon
 				return result, fmt.Errorf("claude execution failed with exit code %d: %w", result.ExitCode, ErrPromptTooLong)
 			}
 
+			// Check if this is a session resume failure and retry once
+			// Only retry if: session ID was provided, not already forcing new session, and exit code is 1
+			if config.SessionID != "" && !config.ForceNewSession && result.ExitCode == 1 {
+				if e.logger != nil {
+					e.logger.Info("Session resume failed (session may have expired), retrying with new session...")
+				}
+
+				// Retry with new session - ForceNewSession prevents infinite retry loop
+				retryConfig := config
+				retryConfig.SessionID = ""
+				retryConfig.ForceNewSession = true
+
+				return e.ExecuteStreaming(ctx, retryConfig, onProgress)
+			}
+
 			return result, fmt.Errorf("claude execution failed with exit code %d: %w", result.ExitCode, ErrClaude)
 		}
 
@@ -447,6 +479,7 @@ func (e *claudeExecutor) ExecuteStreaming(ctx context.Context, config ExecuteCon
 
 	result.Duration = time.Since(start)
 	result.ExitCode = 0
+	result.RawOutput = allOutput.String()
 
 	// Extract output from final chunk
 	if finalChunk != nil {
