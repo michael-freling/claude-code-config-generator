@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 // MockClaudeExecutor is a mock implementation of ClaudeExecutor
@@ -1508,21 +1509,24 @@ func TestOrchestrator_executePhase_InvalidPhase(t *testing.T) {
 
 func TestOrchestrator_Start(t *testing.T) {
 	tests := []struct {
-		name       string
-		setupMocks func(*MockStateManager)
-		wantErr    bool
+		name        string
+		setupMocks  func(*MockStateManager, *command.MockGitRunner, *command.MockGhRunner)
+		updatePR    *int
+		wantErr     bool
+		errContains string
 	}{
 		{
 			name: "fails when InitState fails",
-			setupMocks: func(sm *MockStateManager) {
+			setupMocks: func(sm *MockStateManager, gr *command.MockGitRunner, ghr *command.MockGhRunner) {
 				sm.On("WorkflowExists", "test-workflow").Return(false)
 				sm.On("InitState", "test-workflow", "test description", WorkflowTypeFeature).Return((*WorkflowState)(nil), errors.New("init failed"))
 			},
-			wantErr: true,
+			updatePR: nil,
+			wantErr:  true,
 		},
 		{
 			name: "deletes and restarts failed workflow",
-			setupMocks: func(sm *MockStateManager) {
+			setupMocks: func(sm *MockStateManager, gr *command.MockGitRunner, ghr *command.MockGhRunner) {
 				sm.On("WorkflowExists", "test-workflow").Return(true)
 				sm.On("LoadState", "test-workflow").Return(&WorkflowState{
 					Name:         "test-workflow",
@@ -1531,11 +1535,12 @@ func TestOrchestrator_Start(t *testing.T) {
 				sm.On("DeleteWorkflow", "test-workflow").Return(nil)
 				sm.On("InitState", "test-workflow", "test description", WorkflowTypeFeature).Return((*WorkflowState)(nil), errors.New("init failed"))
 			},
-			wantErr: true,
+			updatePR: nil,
+			wantErr:  true,
 		},
 		{
 			name: "fails when workflow exists and not failed",
-			setupMocks: func(sm *MockStateManager) {
+			setupMocks: func(sm *MockStateManager, gr *command.MockGitRunner, ghr *command.MockGhRunner) {
 				sm.On("WorkflowExists", "test-workflow").Return(true)
 				sm.On("LoadState", "test-workflow").Return(&WorkflowState{
 					Name:         "test-workflow",
@@ -1543,11 +1548,12 @@ func TestOrchestrator_Start(t *testing.T) {
 				}, nil)
 				sm.On("InitState", "test-workflow", "test description", WorkflowTypeFeature).Return((*WorkflowState)(nil), ErrWorkflowExists)
 			},
-			wantErr: true,
+			updatePR: nil,
+			wantErr:  true,
 		},
 		{
 			name: "fails when deleting failed workflow fails",
-			setupMocks: func(sm *MockStateManager) {
+			setupMocks: func(sm *MockStateManager, gr *command.MockGitRunner, ghr *command.MockGhRunner) {
 				sm.On("WorkflowExists", "test-workflow").Return(true)
 				sm.On("LoadState", "test-workflow").Return(&WorkflowState{
 					Name:         "test-workflow",
@@ -1555,34 +1561,117 @@ func TestOrchestrator_Start(t *testing.T) {
 				}, nil)
 				sm.On("DeleteWorkflow", "test-workflow").Return(errors.New("delete failed"))
 			},
-			wantErr: true,
+			updatePR: nil,
+			wantErr:  true,
 		},
 		{
 			name: "continues when LoadState fails for existing workflow",
-			setupMocks: func(sm *MockStateManager) {
+			setupMocks: func(sm *MockStateManager, gr *command.MockGitRunner, ghr *command.MockGhRunner) {
 				sm.On("WorkflowExists", "test-workflow").Return(true)
 				sm.On("LoadState", "test-workflow").Return((*WorkflowState)(nil), errors.New("load failed"))
 				sm.On("InitState", "test-workflow", "test description", WorkflowTypeFeature).Return((*WorkflowState)(nil), ErrWorkflowExists)
 			},
-			wantErr: true,
+			updatePR: nil,
+			wantErr:  true,
+		},
+		{
+			name: "fails when updatePR validation fails",
+			setupMocks: func(sm *MockStateManager, gr *command.MockGitRunner, ghr *command.MockGhRunner) {
+				ghr.EXPECT().
+					PRView(gomock.Any(), "/tmp/workflows", "number,state,headRefName,baseRefName,mergeable", ".").
+					Return("", errors.New("gh command failed"))
+			},
+			updatePR:    intPtr(123),
+			wantErr:     true,
+			errContains: "failed to validate PR #123 for update",
+		},
+		{
+			name: "fails when PR is not open for update",
+			setupMocks: func(sm *MockStateManager, gr *command.MockGitRunner, ghr *command.MockGhRunner) {
+				prData := map[string]interface{}{
+					"number":      float64(123),
+					"state":       "CLOSED",
+					"headRefName": "feature-branch",
+					"baseRefName": "main",
+					"mergeable":   "MERGEABLE",
+				}
+				jsonBytes, _ := json.Marshal(prData)
+				ghr.EXPECT().
+					PRView(gomock.Any(), "/tmp/workflows", "number,state,headRefName,baseRefName,mergeable", ".").
+					Return(string(jsonBytes), nil)
+			},
+			updatePR:    intPtr(123),
+			wantErr:     true,
+			errContains: "PR #123 is CLOSED, cannot update",
+		},
+		{
+			name: "sets updatePR fields when updatePR is valid",
+			setupMocks: func(sm *MockStateManager, gr *command.MockGitRunner, ghr *command.MockGhRunner) {
+				prData := map[string]interface{}{
+					"number":      float64(123),
+					"state":       "OPEN",
+					"headRefName": "feature-branch",
+					"baseRefName": "main",
+					"mergeable":   "MERGEABLE",
+				}
+				jsonBytes, _ := json.Marshal(prData)
+
+				// First validation call
+				ghr.EXPECT().
+					PRView(gomock.Any(), "/tmp/workflows", "number,state,headRefName,baseRefName,mergeable", ".").
+					Return(string(jsonBytes), nil)
+
+				sm.On("WorkflowExists", "test-workflow").Return(false)
+				sm.On("InitState", "test-workflow", "test description", WorkflowTypeFeature).Return(&WorkflowState{
+					Name:         "test-workflow",
+					CurrentPhase: PhasePlanning,
+					Phases:       map[Phase]*PhaseState{},
+				}, nil)
+
+				// Second validation call
+				ghr.EXPECT().
+					PRView(gomock.Any(), "/tmp/workflows", "number,state,headRefName,baseRefName,mergeable", ".").
+					Return(string(jsonBytes), nil)
+
+				// SaveState called with updatePR and updatePRBranch set
+				sm.On("SaveState", "test-workflow", mock.MatchedBy(func(state *WorkflowState) bool {
+					return state.UpdatePR != nil &&
+						*state.UpdatePR == 123 &&
+						state.UpdatePRBranch == "feature-branch"
+				})).Return(errors.New("stop execution"))
+			},
+			updatePR:    intPtr(123),
+			wantErr:     true,
+			errContains: "stop execution",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
 			mockSM := new(MockStateManager)
-			tt.setupMocks(mockSM)
+			mockGitRunner := command.NewMockGitRunner(ctrl)
+			mockGhRunner := command.NewMockGhRunner(ctrl)
+
+			tt.setupMocks(mockSM, mockGitRunner, mockGhRunner)
 
 			o := &Orchestrator{
 				stateManager: mockSM,
 				config:       DefaultConfig("/tmp/workflows"),
 				logger:       NewLogger(LogLevelNormal),
+				gitRunner:    mockGitRunner,
+				ghRunner:     mockGhRunner,
 			}
 
-			err := o.Start(context.Background(), "test-workflow", "test description", WorkflowTypeFeature, nil)
+			err := o.Start(context.Background(), "test-workflow", "test description", WorkflowTypeFeature, tt.updatePR)
 
 			if tt.wantErr {
 				require.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
 				return
 			}
 
@@ -1590,6 +1679,11 @@ func TestOrchestrator_Start(t *testing.T) {
 			mockSM.AssertExpectations(t)
 		})
 	}
+}
+
+// Helper function to create int pointers
+func intPtr(i int) *int {
+	return &i
 }
 
 func TestOrchestrator_transitionPhase(t *testing.T) {
