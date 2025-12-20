@@ -91,7 +91,7 @@ func TestGenerator_List(t *testing.T) {
 		{
 			name:     "returns available agents",
 			itemType: ItemTypeAgent,
-			wantLen:  8,
+			wantLen:  6,
 		},
 		{
 			name:     "returns available commands",
@@ -133,10 +133,10 @@ func TestGenerator_Generate_Success(t *testing.T) {
 			wantContains: "CI error",
 		},
 		{
-			name:         "outputs golang-code-reviewer agent content",
+			name:         "outputs code-reviewer agent content",
 			itemType:     ItemTypeAgent,
-			templateName: "golang-code-reviewer",
-			wantContains: "Go",
+			templateName: "code-reviewer",
+			wantContains: "code",
 		},
 		{
 			name:         "outputs feature command content",

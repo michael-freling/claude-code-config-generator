@@ -239,7 +239,7 @@ func TestAgentsCmd_Execute(t *testing.T) {
 		},
 		{
 			name: "generate with valid agent name",
-			args: []string{"golang-code-reviewer"},
+			args: []string{"code-reviewer"},
 			setupFunc: func(t *testing.T) string {
 				saved := saveTemplateDir()
 				templateDir = ""

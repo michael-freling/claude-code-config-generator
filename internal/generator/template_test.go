@@ -136,7 +136,7 @@ func TestEngine_List(t *testing.T) {
 		{
 			name:     "list agents returns multiple templates",
 			itemType: ItemTypeAgent,
-			wantLen:  8,
+			wantLen:  6,
 		},
 		{
 			name:     "list commands returns multiple templates",
@@ -151,7 +151,7 @@ func TestEngine_List(t *testing.T) {
 		{
 			name:     "list rules returns multiple templates",
 			itemType: ItemTypeRule,
-			wantLen:  4,
+			wantLen:  3,
 		},
 		{
 			name:     "list unknown type returns empty slice",
@@ -181,14 +181,12 @@ func TestEngine_List_ValidateKnownTemplates(t *testing.T) {
 			name:     "agents includes known templates",
 			itemType: ItemTypeAgent,
 			wantContains: []string{
-				"golang-code-reviewer",
-				"kubernetes-engineer",
 				"architecture-reviewer",
-				"typescript-code-reviewer",
-				"software-architect",
+				"code-reviewer",
 				"github-actions-workflow-engineer",
-				"typescript-engineer",
-				"golang-engineer",
+				"kubernetes-engineer",
+				"software-architect",
+				"software-engineer",
 			},
 		},
 		{
@@ -215,10 +213,9 @@ func TestEngine_List_ValidateKnownTemplates(t *testing.T) {
 			name:     "rules includes known templates",
 			itemType: ItemTypeRule,
 			wantContains: []string{
-				"common",
+				"coding-guidelines",
 				"golang",
 				"typescript",
-				"python",
 			},
 		},
 	}
@@ -256,10 +253,10 @@ func TestEngine_Generate_Success(t *testing.T) {
 			wantContains: "CI error",
 		},
 		{
-			name:         "generates golang-code-reviewer agent template",
+			name:         "generates code-reviewer agent template",
 			itemType:     ItemTypeAgent,
-			templateName: "golang-code-reviewer",
-			wantContains: "Go",
+			templateName: "code-reviewer",
+			wantContains: "code",
 		},
 		{
 			name:         "generates feature command template",
@@ -268,10 +265,10 @@ func TestEngine_Generate_Success(t *testing.T) {
 			wantContains: "feature",
 		},
 		{
-			name:         "generates common rule template",
+			name:         "generates coding-guidelines rule template",
 			itemType:     ItemTypeRule,
-			templateName: "common",
-			wantContains: "Common Coding Guidelines",
+			templateName: "coding-guidelines",
+			wantContains: "Coding Guidelines",
 		},
 		{
 			name:         "generates golang rule template",
@@ -284,12 +281,6 @@ func TestEngine_Generate_Success(t *testing.T) {
 			itemType:     ItemTypeRule,
 			templateName: "typescript",
 			wantContains: "TypeScript Coding Guidelines",
-		},
-		{
-			name:         "generates python rule template",
-			itemType:     ItemTypeRule,
-			templateName: "python",
-			wantContains: "Python Coding Guidelines",
 		},
 	}
 
@@ -640,13 +631,13 @@ func TestEngine_Generate_RealRuleOutput(t *testing.T) {
 			},
 		},
 		{
-			name:     "common rule without paths",
-			ruleName: "common",
+			name:     "coding-guidelines rule without paths",
+			ruleName: "coding-guidelines",
 			wantContains: []string{
-				"---",
-				"# Common Coding Guidelines",
+				"# Coding Guidelines",
 			},
 			wantNotContain: []string{
+				"---",
 				"paths:",
 			},
 		},

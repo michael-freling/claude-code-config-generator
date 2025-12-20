@@ -2,7 +2,7 @@
 # This file defines available Claude Code rules and their default settings
 
 default_rules:
-  - common
+  - coding-guidelines
   - golang
 
 rules:
