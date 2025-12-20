@@ -80,9 +80,9 @@ export default [
 
 | Pattern | Rule | Description |
 | --- | --- | --- |
-| `describe.skip()` | `mocha/no-pending-tests` | Skipped test suite |
-| `it.skip()` | `mocha/no-pending-tests` | Skipped test case |
-| `context.skip()` | `mocha/no-pending-tests` | Skipped test context |
+| `describe.skip()` | `mocha/no-skipped-tests` | Skipped test suite |
+| `it.skip()` | `mocha/no-skipped-tests` | Skipped test case |
+| `context.skip()` | `mocha/no-skipped-tests` | Skipped test context |
 | `describe.only()` | `mocha/no-exclusive-tests` | Exclusive test suite |
 | `it.only()` | `mocha/no-exclusive-tests` | Exclusive test case |
 | `context.only()` | `mocha/no-exclusive-tests` | Exclusive test context |

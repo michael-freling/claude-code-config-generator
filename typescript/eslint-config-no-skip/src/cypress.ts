@@ -13,7 +13,7 @@ export const cypressConfig: Linter.Config[] = [
       mocha,
     },
     rules: {
-      'mocha/no-pending-tests': 'error',
+      'mocha/no-skipped-tests': 'error',
       'mocha/no-exclusive-tests': 'error',
     },
   },

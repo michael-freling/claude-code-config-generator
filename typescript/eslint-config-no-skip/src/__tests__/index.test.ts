@@ -90,7 +90,7 @@ describe('noSkipConfig', () => {
       },
       {
         name: 'claude-code-tools/no-skip/cypress',
-        expectedRules: ['mocha/no-pending-tests', 'mocha/no-exclusive-tests'],
+        expectedRules: ['mocha/no-skipped-tests', 'mocha/no-exclusive-tests'],
       },
     ];
 

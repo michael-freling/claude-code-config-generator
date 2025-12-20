@@ -22,9 +22,9 @@ describe('cypressConfig', () => {
 
   testRulesConfiguration(cypressConfig, [
     {
-      rule: 'mocha/no-pending-tests',
+      rule: 'mocha/no-skipped-tests',
       level: 'error',
-      description: 'should error on pending tests',
+      description: 'should error on skipped tests',
     },
     {
       rule: 'mocha/no-exclusive-tests',
