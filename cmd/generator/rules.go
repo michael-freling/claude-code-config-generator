@@ -11,7 +11,16 @@ import (
 )
 
 func isValidRuleName(name string) bool {
-	return !strings.ContainsAny(name, "/\\..")
+	if name == "" {
+		return false
+	}
+	if strings.ContainsAny(name, "/\\") {
+		return false
+	}
+	if strings.Contains(name, "..") {
+		return false
+	}
+	return true
 }
 
 func newRulesCmd() *cobra.Command {
@@ -55,7 +64,7 @@ func newRulesCmd() *cobra.Command {
 			}
 
 			if !isValidRuleName(ruleName) {
-				return fmt.Errorf("invalid rule name %q: rule names cannot contain path separators (/, \\) or special characters (..)", ruleName)
+				return fmt.Errorf("invalid rule name %q: rule names cannot contain path separators (/, \\) or parent directory traversal (..)", ruleName)
 			}
 
 			content, err := gen.GenerateRuleWithOptions(ruleName, generator.GenerateOptions{

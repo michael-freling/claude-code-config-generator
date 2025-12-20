@@ -1099,6 +1099,26 @@ func TestIsValidRuleName(t *testing.T) {
 			want:     true,
 		},
 		{
+			name:     "valid name with single dot",
+			ruleName: "my.rule",
+			want:     true,
+		},
+		{
+			name:     "invalid empty string",
+			ruleName: "",
+			want:     false,
+		},
+		{
+			name:     "invalid single dot",
+			ruleName: ".",
+			want:     true,
+		},
+		{
+			name:     "invalid double dot",
+			ruleName: "..",
+			want:     false,
+		},
+		{
 			name:     "invalid with forward slash",
 			ruleName: "../evil",
 			want:     false,

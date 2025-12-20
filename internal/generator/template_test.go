@@ -589,46 +589,35 @@ rules:
 
 func TestPathsToYAML(t *testing.T) {
 	tests := []struct {
-		name    string
-		paths   []string
-		want    string
-		wantErr bool
+		name  string
+		paths []string
+		want  string
 	}{
 		{
-			name:    "empty paths returns empty string",
-			paths:   []string{},
-			want:    "",
-			wantErr: false,
+			name:  "empty paths returns empty string",
+			paths: []string{},
+			want:  "",
 		},
 		{
-			name:    "single path",
-			paths:   []string{"**/*.go"},
-			want:    `  - "**/*.go"`,
-			wantErr: false,
+			name:  "single path",
+			paths: []string{"**/*.go"},
+			want:  "  - \"**/*.go\"\n",
 		},
 		{
-			name:    "multiple paths",
-			paths:   []string{"**/*.go", "**/*.ts"},
-			want:    "  - \"**/*.go\"\n  - \"**/*.ts\"",
-			wantErr: false,
+			name:  "multiple paths",
+			paths: []string{"**/*.go", "**/*.ts"},
+			want:  "  - \"**/*.go\"\n  - \"**/*.ts\"\n",
 		},
 		{
-			name:    "paths with special characters",
-			paths:   []string{"**/*.{ts,tsx}", "src/**/*.py"},
-			want:    "  - \"**/*.{ts,tsx}\"\n  - \"src/**/*.py\"",
-			wantErr: false,
+			name:  "paths with special characters",
+			paths: []string{"**/*.{ts,tsx}", "src/**/*.py"},
+			want:  "  - \"**/*.{ts,tsx}\"\n  - \"src/**/*.py\"\n",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := pathsToYAML(tt.paths)
-			if tt.wantErr {
-				require.Error(t, err)
-				return
-			}
-
-			require.NoError(t, err)
+			got := pathsToYAML(tt.paths)
 			assert.Equal(t, tt.want, got)
 		})
 	}

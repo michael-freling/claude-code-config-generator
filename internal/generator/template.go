@@ -67,17 +67,17 @@ type RulesConfig struct {
 var templatesFS = templates.FS
 
 // pathsToYAML converts a string slice of paths to a YAML array format with indentation
-func pathsToYAML(paths []string) (string, error) {
+func pathsToYAML(paths []string) string {
 	if len(paths) == 0 {
-		return "", nil
+		return ""
 	}
-
-	var lines []string
+	var result strings.Builder
 	for _, path := range paths {
-		lines = append(lines, fmt.Sprintf("  - %q", path))
+		result.WriteString("  - \"")
+		result.WriteString(path)
+		result.WriteString("\"\n")
 	}
-
-	return strings.Join(lines, "\n"), nil
+	return result.String()
 }
 
 // Engine holds parsed templates and provides generation capabilities
@@ -341,7 +341,7 @@ func (e *Engine) InitRulesDirectory(dir string, rules []string, force bool) erro
 			return fmt.Errorf("failed to write file %s: %w", outputPath, err)
 		}
 
-		_, _ = fmt.Printf("Created %s\n", outputPath)
+		fmt.Printf("Created %s\n", outputPath)
 	}
 
 	return nil
