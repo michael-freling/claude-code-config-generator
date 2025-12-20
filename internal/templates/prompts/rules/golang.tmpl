@@ -1,0 +1,64 @@
+{{- template "YAML_FRONTMATTER" . -}}
+# Go Coding Guidelines
+
+Go-specific coding standards for writing clean, maintainable, and idiomatic Go code.
+
+## Error Handling
+
+- Every error MUST be checked or returned - never ignore errors
+- Prefer early returns over nested error handling
+- Use error wrapping with context: `fmt.Errorf("failed to X: %w", err)`
+- Follow the principle: "if is bad, else is worse"
+- Define custom error types for domain-specific errors
+- Use sentinel errors for expected error conditions
+
+## Code Structure
+
+- Prefer early returns and guard clauses over deep nesting
+- Continue or return early rather than using else blocks
+- Delete all dead code - no commented-out code or unused functions
+- Keep functions focused and small (single responsibility)
+- Use meaningful variable and function names
+- Avoid deep nesting (maximum 3-4 levels)
+
+## Formatting and Style
+
+- Run `go fmt` before committing
+- Run `go vet` to catch common issues
+- Follow standard Go naming conventions (camelCase for unexported, PascalCase for exported)
+- Use gofmt/goimports for consistent formatting
+- Maximum line length should be reasonable (typically 100-120 characters)
+
+## Testing Standards
+
+- Use table-driven testing for all tests
+- Split happy path and error test cases into separate tables if complex
+- Define test inputs as test case struct fields, NOT as function arguments
+- ALWAYS use `want`/`got` naming - NEVER use `expected`/`actual`
+- Use `assert` from testify when the test can continue after failure
+- Use `require` from testify when the test should stop immediately on failure
+- Use `go.uber.org/gomock` for all mock generation and usage
+- NEVER skip failing tests - fix them
+- Test both success and error paths
+- Test edge cases and boundary conditions
+
+## File Permissions
+
+- Set proper owners and permissions on files and directories
+- NEVER use 777 permissions - always use minimum required permissions
+
+## Pre-Commit Requirements
+
+- Run `go build ./...` to verify compilation
+- Run `go vet ./...` to catch common issues
+- Run `go test ./...` to ensure all tests pass
+- Run `go mod tidy` if dependencies changed
+- Run all pre-commit hooks and fix ALL errors they report
+
+## Comments
+
+- Write minimal comments - only high-level explanations
+- Explain the "why", not the "what"
+- NO line-by-line comments
+- Let the code be self-documenting through clear naming
+- Document exported functions, types, and packages

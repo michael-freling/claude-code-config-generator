@@ -33,7 +33,7 @@ func TestNewRootCmd(t *testing.T) {
 	for _, c := range cmd.Commands() {
 		commandNames = append(commandNames, c.Name())
 	}
-	assert.ElementsMatch(t, []string{"agents", "commands", "skills"}, commandNames)
+	assert.ElementsMatch(t, []string{"agents", "commands", "rules", "skills"}, commandNames)
 
 	persistentFlags := cmd.PersistentFlags()
 	flag := persistentFlags.Lookup("template-dir")
@@ -545,6 +545,27 @@ func TestCommandArgs(t *testing.T) {
 			wantErrMsg: "accepts 1 arg(s), received 2",
 		},
 		{
+			name:       "rules with correct args",
+			cmdFunc:    newRulesCmd,
+			args:       []string{"test-rule"},
+			wantErr:    false,
+			wantErrMsg: "",
+		},
+		{
+			name:       "rules with no args",
+			cmdFunc:    newRulesCmd,
+			args:       []string{},
+			wantErr:    true,
+			wantErrMsg: "accepts 1 arg(s), received 0",
+		},
+		{
+			name:       "rules with too many args",
+			cmdFunc:    newRulesCmd,
+			args:       []string{"test", "extra"},
+			wantErr:    true,
+			wantErrMsg: "accepts 1 arg(s), received 2",
+		},
+		{
 			name:       "skills with correct args",
 			cmdFunc:    newSkillsCmd,
 			args:       []string{"test-skill"},
@@ -599,6 +620,12 @@ func TestSubcommands(t *testing.T) {
 			name:         "commands command",
 			cmdFunc:      newCommandsCmd,
 			expectedUse:  "commands [name|list]",
+			expectedArgs: cobra.ExactArgs(1),
+		},
+		{
+			name:         "rules command",
+			cmdFunc:      newRulesCmd,
+			expectedUse:  "rules [name|list]",
 			expectedArgs: cobra.ExactArgs(1),
 		},
 		{
@@ -710,6 +737,129 @@ func TestSkillsCmd_CreateGeneratorError(t *testing.T) {
 	templateDir = "/non/existent/path"
 
 	cmd := newSkillsCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"list"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to create generator")
+}
+
+func TestNewRulesCmd(t *testing.T) {
+	cmd := newRulesCmd()
+
+	assert.Equal(t, "rules [name|list]", cmd.Use)
+	assert.NotEmpty(t, cmd.Short)
+	assert.NotEmpty(t, cmd.Long)
+	assert.NotNil(t, cmd.RunE)
+
+	err := cmd.Args(cmd, []string{"test"})
+	assert.NoError(t, err)
+
+	err = cmd.Args(cmd, []string{})
+	assert.Error(t, err)
+
+	err = cmd.Args(cmd, []string{"test", "extra"})
+	assert.Error(t, err)
+}
+
+func TestRulesCmd_Execute(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		wantErr     bool
+		errContains string
+		setupFunc   func(t *testing.T) string
+		cleanupFunc func(t *testing.T, saved string)
+	}{
+		{
+			name: "list operation",
+			args: []string{"list"},
+			setupFunc: func(t *testing.T) string {
+				saved := saveTemplateDir()
+				templateDir = ""
+				return saved
+			},
+			cleanupFunc: func(t *testing.T, saved string) {
+				restoreTemplateDir(saved)
+			},
+			wantErr: false,
+		},
+		{
+			name: "generate with valid rule name",
+			args: []string{"golang"},
+			setupFunc: func(t *testing.T) string {
+				saved := saveTemplateDir()
+				templateDir = ""
+				return saved
+			},
+			cleanupFunc: func(t *testing.T, saved string) {
+				restoreTemplateDir(saved)
+			},
+			wantErr: false,
+		},
+		{
+			name: "generate with invalid rule name returns error",
+			args: []string{"non-existent-rule"},
+			setupFunc: func(t *testing.T) string {
+				saved := saveTemplateDir()
+				templateDir = ""
+				return saved
+			},
+			cleanupFunc: func(t *testing.T, saved string) {
+				restoreTemplateDir(saved)
+			},
+			wantErr:     true,
+			errContains: "not found",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			saved := tt.setupFunc(t)
+			defer tt.cleanupFunc(t, saved)
+
+			cmd := newRulesCmd()
+			buf := new(bytes.Buffer)
+			cmd.SetOut(buf)
+			cmd.SetErr(buf)
+			cmd.SetArgs(tt.args)
+
+			err := cmd.Execute()
+
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+				return
+			}
+
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestRulesCmd_List(t *testing.T) {
+	saved := saveTemplateDir()
+	defer restoreTemplateDir(saved)
+
+	templateDir = ""
+
+	gen, err := generator.NewGenerator()
+	require.NoError(t, err)
+
+	rules := gen.List(generator.ItemTypeRule)
+	assert.NotEmpty(t, rules)
+}
+
+func TestRulesCmd_CreateGeneratorError(t *testing.T) {
+	saved := saveTemplateDir()
+	defer restoreTemplateDir(saved)
+
+	templateDir = "/non/existent/path"
+
+	cmd := newRulesCmd()
 	buf := new(bytes.Buffer)
 	cmd.SetOut(buf)
 	cmd.SetErr(buf)

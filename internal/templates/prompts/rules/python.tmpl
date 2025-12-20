@@ -1,0 +1,84 @@
+{{- template "YAML_FRONTMATTER" . -}}
+# Python Coding Guidelines
+
+Python-specific coding standards for writing clean, maintainable, Pythonic code.
+
+## Code Style (PEP 8)
+
+- Follow PEP 8 style guide for Python code
+- Use 4 spaces for indentation (never tabs)
+- Maximum line length of 88 characters (Black formatter default) or 79 (PEP 8)
+- Use snake_case for functions and variables
+- Use PascalCase for class names
+- Use UPPER_CASE for constants
+- Two blank lines between top-level functions and classes
+- One blank line between methods in a class
+
+## Type Hints
+
+- Use type hints for function parameters and return values
+- Import types from `typing` module when needed
+- Use `Optional[T]` for values that can be None
+- Use `Union[A, B]` for multiple possible types
+- Enable mypy or similar type checker in CI/CD
+- Use generics for container types: `list[str]`, `dict[str, int]`
+
+## Error Handling
+
+- Use specific exception types, not bare `except:`
+- Raise appropriate built-in exceptions or custom exceptions
+- Use context managers (`with` statement) for resource management
+- Handle exceptions at appropriate levels
+- Clean up resources in finally blocks or use context managers
+
+## Code Structure
+
+- Prefer early returns over nested conditionals
+- Keep functions small and focused (single responsibility)
+- Use meaningful variable and function names
+- Avoid deep nesting (maximum 3-4 levels)
+- Delete all dead code and unused imports
+- Use list comprehensions and generator expressions where appropriate
+- Prefer `pathlib.Path` over `os.path` for path operations
+
+## Testing Standards
+
+- Write tests using pytest framework
+- Use descriptive test function names: `test_function_name_scenario_expected_outcome`
+- Use fixtures for test setup and teardown
+- Use parametrize decorator for table-driven tests
+- Mock external dependencies using `unittest.mock` or `pytest-mock`
+- Test both success and error paths
+- Test edge cases and boundary conditions
+- Use assertions with clear failure messages
+
+## Imports
+
+- Group imports: standard library, third-party, local modules
+- Use absolute imports over relative imports
+- One import per line
+- Remove unused imports
+
+## Documentation
+
+- Write docstrings for modules, classes, and public functions
+- Use Google or NumPy docstring style consistently
+- Include type information in docstrings if not using type hints
+- Explain the "why", not the "what"
+- Remove commented-out code
+
+## Best Practices
+
+- Use `is` for None comparisons: `if x is None:`
+- Use `not` for boolean negation: `if not is_valid:`
+- Use `in` for membership testing: `if key in dict:`
+- Prefer `f-strings` for string formatting
+- Use `enumerate()` instead of manual counters
+- Use `zip()` for parallel iteration
+- Use context managers for file operations
+
+## Virtual Environments
+
+- Always use virtual environments (venv, virtualenv, or poetry)
+- Keep dependencies in requirements.txt or pyproject.toml
+- Pin dependency versions for reproducibility

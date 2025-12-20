@@ -1,0 +1,72 @@
+{{- template "YAML_FRONTMATTER" . -}}
+# TypeScript Coding Guidelines
+
+TypeScript-specific coding standards for writing type-safe, maintainable code.
+
+## Type Safety
+
+- Enable strict mode in tsconfig.json (`"strict": true`)
+- Avoid using `any` type - use `unknown` if type is truly unknown
+- Define explicit return types for functions
+- Use type guards for runtime type checking
+- Prefer interfaces over type aliases for object shapes
+- Use union types and discriminated unions for polymorphic data
+
+## Error Handling
+
+- Use try-catch blocks for async/await operations
+- Handle promise rejections explicitly
+- Throw Error objects, not strings or primitives
+- Create custom error classes for domain-specific errors
+- Validate input parameters and fail fast
+
+## Code Structure
+
+- Prefer early returns over nested conditionals
+- Keep functions small and focused (single responsibility)
+- Use meaningful variable and function names
+- Avoid deep nesting (maximum 3-4 levels)
+- Delete all dead code and unused imports
+- Use const by default, let only when reassignment is needed
+- Never use var
+
+## Formatting and Style
+
+- Use Prettier or ESLint for consistent formatting
+- Follow project's naming conventions (camelCase for variables/functions, PascalCase for classes/types)
+- Use semicolons consistently (as per project configuration)
+- Maximum line length should be reasonable (typically 100-120 characters)
+- Use template literals for string interpolation
+
+## Testing Standards
+
+- Write tests using Jest, Vitest, or similar frameworks
+- Use describe/it blocks for test organization
+- Follow AAA pattern: Arrange, Act, Assert
+- Use meaningful test descriptions
+- Mock external dependencies appropriately
+- Test both success and error paths
+- Test edge cases and boundary conditions
+- Use `expect` assertions with specific matchers
+
+## Async/Await Best Practices
+
+- Prefer async/await over raw promises for readability
+- Always await promises or handle them explicitly
+- Handle errors in async functions with try-catch
+- Avoid mixing callbacks and promises
+
+## Module Organization
+
+- Use ES modules (import/export)
+- Group imports: external libraries first, then internal modules
+- Export only what needs to be public
+- Keep module boundaries clear and cohesive
+
+## Comments
+
+- Write minimal comments - only high-level explanations
+- Explain the "why", not the "what"
+- Use JSDoc for public APIs
+- Let TypeScript types document data shapes
+- Remove commented-out code
