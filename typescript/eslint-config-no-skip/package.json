@@ -68,5 +68,8 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/michael-freling/claude-code-tools"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
   }
 }
