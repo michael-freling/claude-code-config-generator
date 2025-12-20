@@ -869,3 +869,298 @@ func TestRulesCmd_CreateGeneratorError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to create generator")
 }
+
+func TestRulesCmd_WithFlags(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		wantErr     bool
+		errContains string
+		setupFunc   func(t *testing.T) (string, string)
+		cleanupFunc func(t *testing.T, saved string, tempDir string)
+	}{
+		{
+			name: "generate with paths flag",
+			args: []string{"golang", "--paths", "src/**/*.go"},
+			setupFunc: func(t *testing.T) (string, string) {
+				saved := saveTemplateDir()
+				templateDir = ""
+				return saved, ""
+			},
+			cleanupFunc: func(t *testing.T, saved string, tempDir string) {
+				restoreTemplateDir(saved)
+			},
+			wantErr: false,
+		},
+		{
+			name: "generate with output-dir flag",
+			args: []string{"golang", "--output-dir", ""},
+			setupFunc: func(t *testing.T) (string, string) {
+				saved := saveTemplateDir()
+				templateDir = ""
+				tempDir, err := os.MkdirTemp("", "rules-test-*")
+				require.NoError(t, err)
+				return saved, tempDir
+			},
+			cleanupFunc: func(t *testing.T, saved string, tempDir string) {
+				os.RemoveAll(tempDir)
+				restoreTemplateDir(saved)
+			},
+			wantErr: false,
+		},
+		{
+			name: "generate with filename flag",
+			args: []string{"golang", "--output-dir", "", "--filename", "custom.md"},
+			setupFunc: func(t *testing.T) (string, string) {
+				saved := saveTemplateDir()
+				templateDir = ""
+				tempDir, err := os.MkdirTemp("", "rules-test-*")
+				require.NoError(t, err)
+				return saved, tempDir
+			},
+			cleanupFunc: func(t *testing.T, saved string, tempDir string) {
+				os.RemoveAll(tempDir)
+				restoreTemplateDir(saved)
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid rule name with path separator",
+			args: []string{"../evil"},
+			setupFunc: func(t *testing.T) (string, string) {
+				saved := saveTemplateDir()
+				templateDir = ""
+				return saved, ""
+			},
+			cleanupFunc: func(t *testing.T, saved string, tempDir string) {
+				restoreTemplateDir(saved)
+			},
+			wantErr:     true,
+			errContains: "invalid rule name",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			saved, tempDir := tt.setupFunc(t)
+			defer tt.cleanupFunc(t, saved, tempDir)
+
+			args := tt.args
+			if tempDir != "" {
+				for i, arg := range args {
+					if arg == "--output-dir" && i+1 < len(args) && args[i+1] == "" {
+						args[i+1] = tempDir
+					}
+				}
+			}
+
+			cmd := newRulesCmd()
+			buf := new(bytes.Buffer)
+			cmd.SetOut(buf)
+			cmd.SetErr(buf)
+			cmd.SetArgs(args)
+
+			err := cmd.Execute()
+
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+				return
+			}
+
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestRulesInitCmd(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		wantErr     bool
+		errContains string
+		setupFunc   func(t *testing.T) (string, string)
+		cleanupFunc func(t *testing.T, saved string, tempDir string)
+	}{
+		{
+			name: "init with custom dir",
+			args: []string{"init", "--dir", ""},
+			setupFunc: func(t *testing.T) (string, string) {
+				saved := saveTemplateDir()
+				templateDir = ""
+				tempDir, err := os.MkdirTemp("", "rules-init-test-*")
+				require.NoError(t, err)
+				return saved, tempDir
+			},
+			cleanupFunc: func(t *testing.T, saved string, tempDir string) {
+				os.RemoveAll(tempDir)
+				restoreTemplateDir(saved)
+			},
+			wantErr: false,
+		},
+		{
+			name: "init with specific rules",
+			args: []string{"init", "--dir", "", "--rules", "golang"},
+			setupFunc: func(t *testing.T) (string, string) {
+				saved := saveTemplateDir()
+				templateDir = ""
+				tempDir, err := os.MkdirTemp("", "rules-init-test-*")
+				require.NoError(t, err)
+				return saved, tempDir
+			},
+			cleanupFunc: func(t *testing.T, saved string, tempDir string) {
+				os.RemoveAll(tempDir)
+				restoreTemplateDir(saved)
+			},
+			wantErr: false,
+		},
+		{
+			name: "init with force flag",
+			args: []string{"init", "--dir", "", "--force"},
+			setupFunc: func(t *testing.T) (string, string) {
+				saved := saveTemplateDir()
+				templateDir = ""
+				tempDir, err := os.MkdirTemp("", "rules-init-test-*")
+				require.NoError(t, err)
+				return saved, tempDir
+			},
+			cleanupFunc: func(t *testing.T, saved string, tempDir string) {
+				os.RemoveAll(tempDir)
+				restoreTemplateDir(saved)
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			saved, tempDir := tt.setupFunc(t)
+			defer tt.cleanupFunc(t, saved, tempDir)
+
+			args := tt.args
+			if tempDir != "" {
+				for i, arg := range args {
+					if arg == "--dir" && i+1 < len(args) && args[i+1] == "" {
+						args[i+1] = tempDir
+					}
+				}
+			}
+
+			cmd := newRulesCmd()
+			buf := new(bytes.Buffer)
+			cmd.SetOut(buf)
+			cmd.SetErr(buf)
+			cmd.SetArgs(args)
+
+			err := cmd.Execute()
+
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+				return
+			}
+
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestRulesInitCmd_CreateGeneratorError(t *testing.T) {
+	saved := saveTemplateDir()
+	defer restoreTemplateDir(saved)
+
+	templateDir = "/non/existent/path"
+
+	cmd := newRulesCmd()
+	buf := new(bytes.Buffer)
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"init"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to create generator")
+}
+
+func TestIsValidRuleName(t *testing.T) {
+	tests := []struct {
+		name     string
+		ruleName string
+		want     bool
+	}{
+		{
+			name:     "valid simple name",
+			ruleName: "golang",
+			want:     true,
+		},
+		{
+			name:     "valid name with hyphen",
+			ruleName: "my-rule",
+			want:     true,
+		},
+		{
+			name:     "invalid with forward slash",
+			ruleName: "../evil",
+			want:     false,
+		},
+		{
+			name:     "invalid with backslash",
+			ruleName: "..\\evil",
+			want:     false,
+		},
+		{
+			name:     "invalid with dots",
+			ruleName: "..test",
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isValidRuleName(tt.ruleName)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestEnhanceRuleError(t *testing.T) {
+	saved := saveTemplateDir()
+	defer restoreTemplateDir(saved)
+	templateDir = ""
+
+	gen, err := generator.NewGenerator()
+	require.NoError(t, err)
+
+	tests := []struct {
+		name        string
+		err         error
+		ruleName    string
+		wantNil     bool
+		wantContain string
+	}{
+		{
+			name:     "nil error returns nil",
+			err:      nil,
+			ruleName: "test",
+			wantNil:  true,
+		},
+		{
+			name:        "not found error shows available rules",
+			err:         assert.AnError,
+			ruleName:    "nonexistent",
+			wantContain: "failed to generate rule",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := enhanceRuleError(tt.err, tt.ruleName, gen)
+			if tt.wantNil {
+				assert.Nil(t, result)
+				return
+			}
+			require.NotNil(t, result)
+			assert.Contains(t, result.Error(), tt.wantContain)
+		})
+	}
+}

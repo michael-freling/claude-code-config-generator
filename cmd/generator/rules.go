@@ -11,10 +11,7 @@ import (
 )
 
 func isValidRuleName(name string) bool {
-	if strings.ContainsAny(name, "/\\..") {
-		return false
-	}
-	return true
+	return !strings.ContainsAny(name, "/\\..")
 }
 
 func newRulesCmd() *cobra.Command {
