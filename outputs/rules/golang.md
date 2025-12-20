@@ -1,4 +1,6 @@
-{{- template "YAML_FRONTMATTER" . -}}
+---
+paths: **/*.go
+---
 # Go Coding Guidelines
 
 - Go tests must always use want/got (never expected/actual).

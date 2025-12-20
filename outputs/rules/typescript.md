@@ -1,4 +1,6 @@
-{{- template "YAML_FRONTMATTER" . -}}
+---
+paths: **/*.ts, **/*.tsx
+---
 # TypeScript Coding Guidelines
 
 - Implement UI components based on a mobile-first approach
