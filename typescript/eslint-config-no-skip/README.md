@@ -1,4 +1,4 @@
-# @claude-code-tools/eslint-config-no-skip
+# @michael-freling/eslint-config-no-skip
 
 ESLint shareable configuration to detect and error on skipped tests in Jest and Cypress test suites.
 
@@ -7,7 +7,7 @@ This package provides ESLint configurations that prevent accidentally committing
 ## Installation
 
 ```bash
-pnpm add -D @claude-code-tools/eslint-config-no-skip
+pnpm add -D @michael-freling/eslint-config-no-skip
 ```
 
 ## Requirements
@@ -23,7 +23,7 @@ Import the default configuration to check both Jest and Cypress test files:
 
 ```javascript
 // eslint.config.js
-import noSkipConfig from '@claude-code-tools/eslint-config-no-skip';
+import noSkipConfig from '@michael-freling/eslint-config-no-skip';
 
 export default [
   ...noSkipConfig,
@@ -41,7 +41,7 @@ Import only the Jest configuration:
 
 ```javascript
 // eslint.config.js
-import jestConfig from '@claude-code-tools/eslint-config-no-skip/jest';
+import jestConfig from '@michael-freling/eslint-config-no-skip/jest';
 
 export default [
   ...jestConfig,
@@ -55,7 +55,7 @@ Import only the Cypress configuration:
 
 ```javascript
 // eslint.config.js
-import cypressConfig from '@claude-code-tools/eslint-config-no-skip/cypress';
+import cypressConfig from '@michael-freling/eslint-config-no-skip/cypress';
 
 export default [
   ...cypressConfig,

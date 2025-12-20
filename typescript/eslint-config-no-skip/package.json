@@ -1,5 +1,5 @@
 {
-  "name": "@claude-code-tools/eslint-config-no-skip",
+  "name": "@michael-freling/eslint-config-no-skip",
   "version": "0.1.0",
   "description": "ESLint shareable configuration to detect and error on skipped tests in Jest and Cypress",
   "type": "module",
