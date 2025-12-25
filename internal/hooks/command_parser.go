@@ -135,9 +135,7 @@ func findNonFlagArgs(args []string, startIndex int, flagsWithValues []string) []
 // Handles formats: "+src:dst" -> "dst", "+branch" -> "branch", ":branch" -> "branch", "src:dst" -> "dst"
 func extractTargetFromRefspec(refspec string) string {
 	// Strip force push prefix
-	if strings.HasPrefix(refspec, "+") {
-		refspec = refspec[1:]
-	}
+	refspec = strings.TrimPrefix(refspec, "+")
 
 	// Check for colon separator (src:dst format)
 	if idx := strings.Index(refspec, ":"); idx >= 0 {
