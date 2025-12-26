@@ -44,10 +44,27 @@ func (r *gitPushRule) Evaluate(input *ToolInput) (*RuleResult, error) {
 
 	command = strings.TrimSpace(command)
 
+	// Split command on shell operators to handle chaining, pipes, backgrounding
+	subCommands := splitShellCommands(command)
+
+	// Check each sub-command
+	for _, subCmd := range subCommands {
+		if result := r.evaluateSingleCommand(subCmd); result != nil && !result.Allowed {
+			return result, nil
+		}
+	}
+
+	return NewAllowedResult(), nil
+}
+
+// evaluateSingleCommand checks if a single command (not chained) is a blocked git push.
+func (r *gitPushRule) evaluateSingleCommand(command string) *RuleResult {
+	command = strings.TrimSpace(command)
+
 	// Parse the command to check if it's a git push
 	args := parseGitPushArgs(command)
 	if len(args) < 2 || args[0] != "git" || args[1] != "push" {
-		return NewAllowedResult(), nil
+		return nil
 	}
 
 	// Check for --all or --mirror flags (pushes to all branches including protected ones)
@@ -55,17 +72,17 @@ func (r *gitPushRule) Evaluate(input *ToolInput) (*RuleResult, error) {
 		return NewBlockedResult(
 			r.Name(),
 			"Push --all/--mirror includes protected branches and is not allowed",
-		), nil
+		)
 	}
 
 	// Check for delete operations on protected branches
 	if result := r.checkDeleteOperation(args); result != nil {
-		return result, nil
+		return result
 	}
 
 	// Check for refspec-based push to protected branches (including force push with +)
 	if result := r.checkRefspecPush(args); result != nil {
-		return result, nil
+		return result
 	}
 
 	// Check for explicit branch name
@@ -73,7 +90,7 @@ func (r *gitPushRule) Evaluate(input *ToolInput) (*RuleResult, error) {
 		return NewBlockedResult(
 			r.Name(),
 			"Direct push to main/master branch is not allowed",
-		), nil
+		)
 	}
 
 	// Check for implicit push (no branch specified)
@@ -82,18 +99,18 @@ func (r *gitPushRule) Evaluate(input *ToolInput) (*RuleResult, error) {
 		currentBranch, err := r.gitRunner.GetCurrentBranch(context.Background(), "")
 		if err != nil {
 			// Fail open - allow the command if we can't determine the branch
-			return NewAllowedResult(), nil
+			return nil
 		}
 
 		if isProtectedBranch(currentBranch) {
 			return NewBlockedResult(
 				r.Name(),
 				"Direct push to main/master branch is not allowed",
-			), nil
+			)
 		}
 	}
 
-	return NewAllowedResult(), nil
+	return nil
 }
 
 // checkDeleteOperation checks for delete operations on protected branches.
